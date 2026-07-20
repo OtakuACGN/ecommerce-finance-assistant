@@ -2,11 +2,11 @@
 
 面向国内电商（尤其拼多多）卖家的桌面财务工具：四表经营分析、毛利、退货逆向、广告、扣点税、异常找坑。
 
-**仓库：** https://github.com/heidsoft/finance-data-cleaner
+**仓库：** https://github.com/OtakuACGN/ecommerce-finance-assistant
 
 ## 便携版（推荐）
 
-1. 打开 [Releases](https://github.com/heidsoft/finance-data-cleaner/releases) 下载 `FinanceAssistant-Portable-1.1.0.zip`
+1. 打开 [Releases](https://github.com/OtakuACGN/ecommerce-finance-assistant/releases) 下载 `FinanceAssistant-Portable-1.1.0.zip`
 2. 解压后双击 **电商财务经营助手.exe**（无需安装）
 3. 本机已构建路径：`release/FinanceAssistant-Portable-1.1.0.zip` / `release/win-unpacked/`
 
@@ -32,7 +32,7 @@
 ## 从源码运行
 
 ```bash
-git clone https://github.com/heidsoft/finance-data-cleaner.git
+git clone https://github.com/OtakuACGN/ecommerce-finance-assistant.git
 cd finance-data-cleaner
 npm install
 npm run dev
