@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Upload,
   Download,
@@ -33,6 +33,32 @@ interface ToolbarProps {
   desktopReady: boolean;
 }
 
+function ToolBtn({
+  onClick,
+  disabled,
+  className,
+  children,
+  title,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  className: string;
+  children: ReactNode;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-white transition shadow-sm disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-105 active:scale-[0.98] ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function Toolbar({
   onImport,
   onShowExportPanel,
@@ -60,69 +86,60 @@ export default function Toolbar({
 
   const handleColToggle = (i: number) => {
     setSelectedCols((prev) =>
-      prev.includes(i)
-        ? prev.filter((c) => c !== i)
-        : [...prev, i].sort((a, b) => a - b),
+      prev.includes(i) ? prev.filter((c) => c !== i) : [...prev, i].sort((a, b) => a - b),
     );
   };
 
   return (
     <>
-      <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-2 flex-wrap shadow-sm">
-        {/* 导入 */}
-        <button
+      <div className="bg-white/90 border-b border-slate-200 px-4 py-2.5 flex items-center gap-2 flex-wrap shadow-soft backdrop-blur">
+        <ToolBtn
           onClick={onImport}
           disabled={!desktopReady}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-40"
+          className="bg-gradient-to-r from-blue-600 to-indigo-600"
+          title="导入 CSV / Excel"
         >
           <Upload size={15} />
           <span>导入</span>
-        </button>
+        </ToolBtn>
 
-        <div className="h-5 w-px bg-gray-300" />
+        <div className="h-5 w-px bg-slate-200" />
 
-        {/* 导出 */}
-        <button
+        <ToolBtn
           onClick={onShowExportPanel}
           disabled={!hasData || !desktopReady}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-40"
+          className="bg-gradient-to-r from-emerald-500 to-teal-600"
         >
           <Download size={15} />
           <span>导出</span>
-        </button>
+        </ToolBtn>
 
-        <div className="h-5 w-px bg-gray-300" />
+        <div className="h-5 w-px bg-slate-200" />
 
-        {/* 合并 */}
-        <button
-          onClick={onMerge}
-          disabled={!canMerge}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm disabled:opacity-40"
-        >
+        <ToolBtn onClick={onMerge} disabled={!canMerge} className="bg-gradient-to-r from-violet-500 to-purple-600">
           <Merge size={15} />
           <span>合并</span>
-        </button>
+        </ToolBtn>
 
-        <div className="h-5 w-px bg-gray-300" />
+        <div className="h-5 w-px bg-slate-200" />
 
-        {/* 去重 */}
-        <div className="relative">
-          <button
+        <div className="relative flex items-center gap-1">
+          <ToolBtn
             onClick={() => onDeduplicate(dedupCol)}
             disabled={!hasData}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm disabled:opacity-40"
+            className="bg-gradient-to-r from-orange-500 to-amber-500"
           >
             <Scissors size={15} />
             <span>去重</span>
-          </button>
+          </ToolBtn>
           {hasData && (
             <select
               value={dedupCol}
               onChange={(e) => setDedupCol(Number(e.target.value))}
-              className="absolute inset-0 opacity-0 cursor-pointer w-full"
-              title="选择去重列"
+              className="text-xs border border-slate-200 rounded-lg px-1.5 py-1 bg-white"
+              title="去重列"
             >
-              <option value={-1}>全行去重</option>
+              <option value={-1}>全部列</option>
               {headers.map((h, i) => (
                 <option key={i} value={i}>
                   {h || `列${i + 1}`}
@@ -132,187 +149,110 @@ export default function Toolbar({
           )}
         </div>
 
-        {/* 清空白 */}
-        <button
-          onClick={onCleanEmpty}
-          disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors text-sm disabled:opacity-40"
-          title="清除空行空列"
-        >
+        <ToolBtn onClick={onCleanEmpty} disabled={!hasData} className="bg-slate-600">
           <Eraser size={15} />
-          <span>清空</span>
-        </button>
+          <span>清空空行</span>
+        </ToolBtn>
 
-        {/* 日期规范化 */}
-        <button
-          onClick={onStandardizeDate}
-          disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors text-sm disabled:opacity-40"
-          title="将各种日期格式统一为 YYYY-MM-DD"
-        >
-          <Calendar size={15} />
-          <span>日期格式</span>
-        </button>
-
-        {/* Trim */}
-        <button
-          onClick={onTrimWhitespace}
-          disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors text-sm disabled:opacity-40"
-          title="去除首尾空格"
-        >
+        <ToolBtn onClick={onTrimWhitespace} disabled={!hasData} className="bg-slate-500">
+          <span className="text-xs font-bold">T</span>
           <span>Trim</span>
-        </button>
+        </ToolBtn>
 
-        {/* 填充空值 */}
-        <button
-          onClick={() => setShowFillModal(true)}
-          disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors text-sm disabled:opacity-40"
-          title="用指定值填充空单元格"
-        >
+        <ToolBtn onClick={onStandardizeDate} disabled={!hasData} className="bg-sky-600">
+          <Calendar size={15} />
+          <span>日期</span>
+        </ToolBtn>
+
+        <ToolBtn onClick={() => setShowFillModal(true)} disabled={!hasData} className="bg-cyan-600">
           <Pill size={15} />
-          <span>填空值</span>
-        </button>
+          <span>填充</span>
+        </ToolBtn>
 
-        {/* 列筛选 */}
-        <button
-          onClick={() => setShowColPicker(true)}
-          disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-500 text-white rounded-lg hover:bg-pink-600 transition-colors text-sm disabled:opacity-40"
-        >
+        <ToolBtn onClick={() => setShowColPicker(true)} disabled={!hasData} className="bg-indigo-500">
           <Columns size={15} />
           <span>选列</span>
-        </button>
+        </ToolBtn>
 
-        {/* 一键清洗 */}
-        <button
+        <ToolBtn
           onClick={onOneClickClean}
           disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-lg hover:from-blue-600 hover:to-indigo-600 transition-colors text-sm disabled:opacity-40"
-          title="去空格 + 清空空行空列 + 日期标准化"
+          className="bg-gradient-to-r from-fuchsia-500 to-pink-500"
         >
           <Wand2 size={15} />
           <span>一键清洗</span>
-        </button>
-
-        <div className="h-5 w-px bg-gray-300" />
-
-        {/* 撤销 */}
-        <button
-          onClick={onUndo}
-          disabled={!canUndo}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm disabled:opacity-40"
-        >
-          <Undo2 size={15} />
-          <span>撤销</span>
-        </button>
+        </ToolBtn>
 
         <div className="flex-1" />
 
-        {/* 清空全部 */}
-        <button
-          onClick={onClear}
-          disabled={!hasData}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm disabled:opacity-40"
-        >
+        <ToolBtn onClick={onUndo} disabled={!canUndo} className="bg-slate-700">
+          <Undo2 size={15} />
+          <span>撤销</span>
+        </ToolBtn>
+
+        <ToolBtn onClick={onClear} disabled={!hasData} className="bg-rose-500">
           <Trash2 size={15} />
           <span>清空</span>
-        </button>
+        </ToolBtn>
       </div>
 
-      {/* 列筛选弹窗 */}
       {showColPicker && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-96 max-h-[80vh] flex flex-col">
-            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-800">选择保留的列</h3>
-              <button
-                onClick={() => {
-                  setSelectedCols(headers.map((_, i) => i));
-                  setShowColPicker(false);
-                  onSelectColumns(headers.map((_, i) => i));
-                }}
-                className="text-sm text-blue-600 hover:underline"
-              >
-                全选并保留
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1 space-y-2">
+        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 border border-slate-100">
+            <h3 className="font-semibold text-slate-800 mb-3">选择保留列</h3>
+            <div className="max-h-72 overflow-auto space-y-1 mb-4">
               {headers.map((h, i) => (
-                <label
-                  key={i}
-                  className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded"
-                >
+                <label key={i} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-sm">
                   <input
                     type="checkbox"
                     checked={selectedCols.includes(i)}
                     onChange={() => handleColToggle(i)}
-                    className="w-4 h-4"
                   />
-                  <span className="text-sm text-gray-700">
-                    {h || `列${i + 1}`}
-                  </span>
+                  <span className="truncate">{h || `列${i + 1}`}</span>
                 </label>
               ))}
             </div>
-            <div className="p-4 border-t border-gray-200 flex gap-3">
+            <div className="flex justify-end gap-2">
               <button
+                className="px-3 py-1.5 rounded-xl border text-sm"
                 onClick={() => setShowColPicker(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
               >
                 取消
               </button>
               <button
+                className="btn-primary"
                 onClick={() => {
+                  onSelectColumns(selectedCols);
                   setShowColPicker(false);
-                  onSelectColumns(
-                    selectedCols.length > 0
-                      ? selectedCols
-                      : headers.map((_, i) => i),
-                  );
                 }}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
               >
-                确定 ({selectedCols.length} 列)
+                应用
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 填空值弹窗 */}
       {showFillModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-80 p-6">
-            <h3 className="font-semibold text-gray-800 mb-4">填充空单元格</h3>
+        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 border border-slate-100">
+            <h3 className="font-semibold text-slate-800 mb-3">填充空值</h3>
             <input
-              type="text"
+              className="soft-input w-full mb-4"
               value={fillValue}
               onChange={(e) => setFillValue(e.target.value)}
-              placeholder="输入填充值，如：0、N/A"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 outline-none focus:border-blue-500"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  setShowFillModal(false);
-                  onFillEmpty(fillValue);
-                }
-              }}
+              placeholder="填充值"
             />
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowFillModal(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
-              >
+            <div className="flex justify-end gap-2">
+              <button className="px-3 py-1.5 rounded-xl border text-sm" onClick={() => setShowFillModal(false)}>
                 取消
               </button>
               <button
+                className="btn-primary"
                 onClick={() => {
-                  setShowFillModal(false);
                   onFillEmpty(fillValue);
+                  setShowFillModal(false);
                 }}
-                className="flex-1 px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm"
               >
                 填充
               </button>

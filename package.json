@@ -1,13 +1,15 @@
 {
-  "name": "finance-data-cleaner",
-  "version": "1.0.0",
+  "name": "ecommerce-finance-assistant",
+  "version": "1.1.0",
   "type": "module",
-  "description": "财务数据清洗工具 - CSV/Excel处理、去重、合并",
+  "description": "电商财务经营助手 - 拼多多经营分析 / 数据清洗对账桌面工具",
   "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && electron-builder",
-    "preview": "vite preview"
+    "build": "vite build && electron-builder --win nsis",
+    "build:dir": "vite build && electron-builder --win dir",
+    "preview": "vite preview",
+    "pack": "npm run build"
   },
   "keywords": [
     "electron",
@@ -15,7 +17,7 @@
     "data-cleaner",
     "finance"
   ],
-  "author": "",
+  "author": "Local",
   "license": "MIT",
   "dependencies": {
     "lucide-react": "^0.294.0",
@@ -40,34 +42,49 @@
     "vite-plugin-node-polyfills": "^0.26.0"
   },
   "build": {
-    "appId": "com.finance.datacleaner",
-    "productName": "财务数据清洗工具",
+    "appId": "com.ecommerce.finance.assistant",
+    "productName": "电商财务经营助手",
+    "copyright": "Copyright 2026",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
-    "mac": {
-      "target": "dir",
-      "category": "public.app-category.productivity",
-      "sign": false
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "extraMetadata": {
+      "main": "dist-electron/main.cjs"
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "icon": "public/icon.ico"
+      "icon": "build/icon.ico",
+      "artifactName": "Ecommerce-Finance-Assistant-Setup-1.1.0.exe",
+      "signAndEditExecutable": false,
+      "signDlls": false
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "installerLanguages": ["zh_CN"],
-      "language": 2052
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "电商财务经营助手",
+      "installerLanguages": [
+        "zh_CN"
+      ],
+      "language": "2052",
+      "differentialPackage": false,
+      "artifactName": "Ecommerce-Finance-Assistant-Setup-1.1.0.exe"
     },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*"
-    ]
-  }
+    "asar": true
+  },
+  "productName": "电商财务经营助手"
 }

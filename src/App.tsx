@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import Toolbar from "./components/Toolbar";
 import FileSidebar from "./components/FileSidebar";
 import DataTable from "./components/DataTable";
@@ -14,7 +14,13 @@ import {
   exportToExcel,
   exportToCSV,
 } from "./utils/excel";
-import { hasElectronAPI, openDataFiles, saveDataFile } from "./utils/desktop";
+import {
+  hasElectronAPI,
+  openDataFiles,
+  saveDataFile,
+  readLocalFile,
+  writeLocalFile,
+} from "./utils/desktop";
 import {
   smartMergeHeaders,
   executeSmartMerge,
@@ -41,8 +47,102 @@ import {
   parseCommissionDetails,
   calculateRefundLossWithMatching,
 } from "./services/businessLogic";
+import {
+  AdDay,
+  CostSettings,
+  ShopFeeOverride,
+  DEFAULT_COST_SETTINGS,
+  COST_SETTING_TEMPLATES,
+  applyCostTemplate,
+  DEFAULT_EXPRESS_RULES,
+  ExpressShipRule,
+  OperatingReport,
+  PddBillLine,
+  PddOrder,
+  ProductSku,
+  buildOperatingReport,
+  guessShopNameFromFile,
+  ingestForOperating,
+  normalizeShopName,
+  sourceKindLabel,
+} from "./services/pddBusiness";
 
-type Tab = "data" | "mapping" | "reconcile" | "bill" | "rebate" | "monthly";
+const OP_COST_STORAGE_KEY = "pdd-operating-cost-settings";
+
+function cloneDefaultCostSettings(): CostSettings {
+  return {
+    ...DEFAULT_COST_SETTINGS,
+    expressRules: DEFAULT_EXPRESS_RULES.map((r) => ({ ...r })),
+    shopFeeOverrides: (DEFAULT_COST_SETTINGS.shopFeeOverrides || []).map((o) => ({
+      ...o,
+    })),
+  };
+}
+
+function loadOpCostSettings(): CostSettings {
+  try {
+    const raw = localStorage.getItem(OP_COST_STORAGE_KEY);
+    if (!raw) return cloneDefaultCostSettings();
+    const parsed = JSON.parse(raw) as Partial<CostSettings>;
+    const rules =
+      Array.isArray(parsed.expressRules) && parsed.expressRules.length > 0
+        ? parsed.expressRules.map((r) => ({ ...r }))
+        : DEFAULT_EXPRESS_RULES.map((r) => ({ ...r }));
+    return {
+      ...cloneDefaultCostSettings(),
+      ...parsed,
+      expressRules: rules,
+      adAllocateMode:
+        parsed.adAllocateMode === "by_order_count" ||
+        parsed.adAllocateMode === "none" ||
+        parsed.adAllocateMode === "by_gmv"
+          ? parsed.adAllocateMode
+          : "by_gmv",
+      brandPointPct: Math.max(0, Number(parsed.brandPointPct) || 0),
+      ecommerceTaxPct: Math.max(0, Number(parsed.ecommerceTaxPct) || 0),
+      feeBaseMode:
+        parsed.feeBaseMode === "goodsTotal" ||
+        parsed.feeBaseMode === "merchantReceived" ||
+        parsed.feeBaseMode === "revenue"
+          ? parsed.feeBaseMode
+          : "revenue",
+      shopFeeOverrides: Array.isArray(parsed.shopFeeOverrides)
+        ? parsed.shopFeeOverrides.map((o: any) => ({
+            shopName: String(o?.shopName || ""),
+            brandPointPct:
+              o?.brandPointPct === null || o?.brandPointPct === ""
+                ? null
+                : o?.brandPointPct === undefined
+                  ? null
+                  : Math.max(0, Number(o.brandPointPct) || 0),
+            ecommerceTaxPct:
+              o?.ecommerceTaxPct === null || o?.ecommerceTaxPct === ""
+                ? null
+                : o?.ecommerceTaxPct === undefined
+                  ? null
+                  : Math.max(0, Number(o.ecommerceTaxPct) || 0),
+            feeBaseMode:
+              o?.feeBaseMode === "revenue" ||
+              o?.feeBaseMode === "merchantReceived" ||
+              o?.feeBaseMode === "goodsTotal"
+                ? o.feeBaseMode
+                : "",
+          }))
+        : [],
+    };
+  } catch {
+    return cloneDefaultCostSettings();
+  }
+}
+
+type Tab =
+  | "data"
+  | "mapping"
+  | "reconcile"
+  | "bill"
+  | "rebate"
+  | "monthly"
+  | "operating";
 
 function App() {
   const desktopReady = hasElectronAPI();
@@ -75,6 +175,61 @@ function App() {
   const [refundRecords, setRefundRecords] = useState<RefundOrder[]>([]);
   const [refundLossData, setRefundLossData] = useState<any[][]>([]);
   const [commissionDetails, setCommissionDetails] = useState<CommissionDetail[]>([]);
+
+  // 拼多多经营分析（订单+账务+商品成本+推广）
+  const [opOrders, setOpOrders] = useState<PddOrder[]>([]);
+  const [opBillLines, setOpBillLines] = useState<PddBillLine[]>([]);
+  const [opProducts, setOpProducts] = useState<ProductSku[]>([]);
+  const [opAds, setOpAds] = useState<AdDay[]>([]);
+  const [opReport, setOpReport] = useState<OperatingReport | null>(null);
+  const [opSources, setOpSources] = useState<
+    { kind: string; name: string; rows: number; shop?: string }[]
+  >([]);
+  const [opDragOver, setOpDragOver] = useState(false);
+  const [opView, setOpView] = useState<
+    | "summary"
+    | "orders"
+    | "rates"
+    | "shipLoss"
+    | "billTypes"
+    | "billWide"
+    | "ads"
+    | "products"
+    | "unmatched"
+    | "period"
+    | "express"
+    | "shops"
+    | "spuRank"
+    | "skuRank"
+    | "adAnalysis"
+    | "productReturn"
+    | "anomalies"
+    | "anomalyNeg"
+    | "anomalyUnmatched"
+    | "anomalyFeeFlip"
+    | "anomalyHighSku"
+    | "lossDiagnosis"
+    | "bossOnePager"
+  >("summary");
+  const [opShopLabel, setOpShopLabel] = useState("");
+  const [opRankSort, setOpRankSort] = useState<"profit" | "loss">("profit");
+  const [opCostSettings, setOpCostSettings] = useState<CostSettings>(() =>
+    loadOpCostSettings(),
+  );
+  const [opSettingsLoaded, setOpSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    setOpSettingsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!opSettingsLoaded) return;
+    try {
+      localStorage.setItem(OP_COST_STORAGE_KEY, JSON.stringify(opCostSettings));
+    } catch {
+      // ignore quota / private mode
+    }
+  }, [opCostSettings, opSettingsLoaded]);
 
   // 返利相关
   const [rebateTiers] = useState<RebateTier[]>([
@@ -605,19 +760,22 @@ function App() {
     let dataRows = data.slice(1);
 
     // 1. Trim whitespace
-    dataRows = dataRows.map(row =>
-      row.map(cell => (typeof cell === 'string' ? cell.trim() : cell))
+    dataRows = dataRows.map((row: any[]) =>
+      row.map((cell: any) => (typeof cell === "string" ? cell.trim() : cell)),
     );
 
     // 2. Remove empty rows
-    dataRows = dataRows.filter(row =>
-      row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')
+    dataRows = dataRows.filter((row: any[]) =>
+      row.some(
+        (cell: any) =>
+          cell !== null && cell !== undefined && String(cell).trim() !== "",
+      ),
     );
 
     // 3. Standardize dates
-    dataRows = dataRows.map(row =>
-      row.map(cell => {
-        if (typeof cell !== 'string') return cell;
+    dataRows = dataRows.map((row: any[]) =>
+      row.map((cell: any) => {
+        if (typeof cell !== "string") return cell;
         const trimmed = cell.trim();
         const patterns = [
           { regex: /^(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?$/ },
@@ -683,6 +841,627 @@ function App() {
     });
   }, [currentData, applyOneClickClean, showToast]);
 
+
+  // ========== 拼多多经营分析 ==========
+  const pushOpSource = useCallback(
+    (kind: string, name: string, rows: number, shop?: string) => {
+      setOpSources((prev) => {
+        // 同类型+同店铺覆盖；不同类型可并存
+        const others = prev.filter(
+          (s) => !(s.kind === kind && (s.shop || "") === (shop || "")),
+        );
+        return [...others, { kind, name, rows, shop }];
+      });
+    },
+    [],
+  );
+
+  const handleOperatingImportPaths = useCallback(
+    async (filePaths: string[]) => {
+      if (!filePaths.length) return;
+      const stats = {
+        orders: 0,
+        bill: 0,
+        products: 0,
+        ads: 0,
+        unknown: 0,
+        names: [] as string[],
+      };
+      try {
+        for (const filePath of filePaths) {
+          const fileData = await processFile(filePath);
+          if (!fileData) {
+            stats.unknown += 1;
+            continue;
+          }
+          const ingested = ingestForOperating(fileData);
+          const kind = ingested.kind;
+          const shop = normalizeShopName(
+            opShopLabel || guessShopNameFromFile(fileData.name),
+          );
+          stats.names.push(`${fileData.name}→${sourceKindLabel(kind)}`);
+
+          if (kind === "pdd_orders") {
+            const stamped = ingested.orders.map((o) => ({
+              ...o,
+              shopName: shop,
+            }));
+            setOpOrders((prev) => {
+              const map = new Map(prev.map((o) => [o.orderId, o]));
+              for (const o of stamped) map.set(o.orderId, o);
+              return Array.from(map.values());
+            });
+            pushOpSource(kind, fileData.name, stamped.length, shop);
+            setFiles((prev) => [...prev, ingested.normalized]);
+            stats.orders += stamped.length;
+          } else if (kind === "pdd_bill") {
+            const stamped = ingested.billLines.map((l) => ({
+              ...l,
+              shopName: shop,
+            }));
+            setOpBillLines((prev) => [...prev, ...stamped]);
+            if (ingested.billRecord) {
+              setBillRecords((prev) => [...prev, ingested.billRecord!]);
+            }
+            pushOpSource(kind, fileData.name, stamped.length, shop);
+            stats.bill += stamped.length;
+          } else if (kind === "product_master") {
+            setOpProducts(ingested.products);
+            if (ingested.skuMappings) setSkuMappings(ingested.skuMappings);
+            pushOpSource(kind, fileData.name, ingested.products.length, shop);
+            stats.products += ingested.products.length;
+          } else if (kind === "ad_daily") {
+            const stamped = ingested.adDays.map((d) => ({
+              ...d,
+              shopName: shop,
+            }));
+            setOpAds((prev) => {
+              const others = prev.filter(
+                (d) => normalizeShopName(d.shopName) !== shop,
+              );
+              return [...others, ...stamped];
+            });
+            pushOpSource(kind, fileData.name, stamped.length, shop);
+            stats.ads += stamped.length;
+          } else {
+            stats.unknown += 1;
+            showToast(
+              `无法识别：${fileData.name}（需含订单/账务/商品资料/推广特征）`,
+              "warning",
+            );
+          }
+        }
+        setOpReport(null);
+        const parts = [
+          stats.orders ? `订单${stats.orders}单` : "",
+          stats.bill ? `账务${stats.bill}行` : "",
+          stats.products ? `商品${stats.products}规格` : "",
+          stats.ads ? `推广${stats.ads}天` : "",
+          stats.unknown ? `未识别${stats.unknown}个` : "",
+        ].filter(Boolean);
+        showToast(
+          parts.length
+            ? `已导入 ${filePaths.length} 个文件：${parts.join(" · ")}`
+            : "未导入有效数据",
+          parts.length && !stats.unknown ? "success" : "warning",
+        );
+      } catch (error) {
+        reportError("经营分析导入", error);
+      }
+    },
+    [opShopLabel, pushOpSource, reportError, showToast],
+  );
+
+  const handleOperatingImport = useCallback(
+    async (_expect?: string) => {
+      try {
+        const result = await openDataFiles();
+        if (result.canceled || result.filePaths.length === 0) return;
+        await handleOperatingImportPaths(result.filePaths);
+      } catch (error) {
+        reportError("经营分析导入", error);
+      }
+    },
+    [handleOperatingImportPaths, reportError],
+  );
+
+  const handleOperatingDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpDragOver(false);
+      if (!desktopReady) {
+        showToast("请在桌面应用中拖入文件", "warning");
+        return;
+      }
+      const files = Array.from(e.dataTransfer.files || []);
+      const paths = files
+        .map((f) => (f as File & { path?: string }).path || "")
+        .filter(Boolean);
+      if (!paths.length) {
+        showToast(
+          "未拿到本地路径。请用「选择文件」或在桌面应用窗口内拖入",
+          "warning",
+        );
+        return;
+      }
+      await handleOperatingImportPaths(paths);
+    },
+    [desktopReady, handleOperatingImportPaths, showToast],
+  );
+
+  const handleExportCostSettings = useCallback(async () => {
+    try {
+      const defaultName = `经营参数_${new Date().toISOString().slice(0, 10)}.json`;
+      const result = await saveDataFile(defaultName);
+      if (result.canceled || !result.filePath) return;
+      const payload = {
+        version: 1,
+        app: "ecommerce-finance-assistant",
+        exportedAt: new Date().toISOString(),
+        costSettings: opCostSettings,
+      };
+      await writeLocalFile(
+        result.filePath,
+        JSON.stringify(payload, null, 2),
+      );
+      showToast("经营参数已导出 JSON", "success");
+    } catch (error) {
+      reportError("导出经营参数", error);
+    }
+  }, [opCostSettings, reportError, showToast]);
+
+  const handleImportCostSettings = useCallback(async () => {
+    try {
+      const result = await openDataFiles();
+      if (result.canceled || !result.filePaths.length) return;
+      const fp = result.filePaths[0];
+      if (!/\.json$/i.test(fp)) {
+        showToast("请选择 .json 经营参数文件", "warning");
+        return;
+      }
+      const read = await readLocalFile(fp);
+      if (!read.success || !read.buffer) {
+        showToast(read.error || "读取失败", "error");
+        return;
+      }
+      const text = new TextDecoder("utf-8").decode(read.buffer);
+      const parsed = JSON.parse(text);
+      const raw = (parsed?.costSettings || parsed) as Partial<CostSettings>;
+      if (!raw || typeof raw !== "object") {
+        showToast("JSON 格式不正确", "error");
+        return;
+      }
+      const rules =
+        Array.isArray(raw.expressRules) && raw.expressRules.length > 0
+          ? raw.expressRules.map((r) => ({ ...r }))
+          : DEFAULT_EXPRESS_RULES.map((r) => ({ ...r }));
+      const overrides = Array.isArray(raw.shopFeeOverrides)
+        ? raw.shopFeeOverrides.map((o: any) => ({
+            shopName: String(o?.shopName || ""),
+            brandPointPct:
+              o?.brandPointPct === null || o?.brandPointPct === ""
+                ? null
+                : o?.brandPointPct === undefined
+                  ? null
+                  : Math.max(0, Number(o.brandPointPct) || 0),
+            ecommerceTaxPct:
+              o?.ecommerceTaxPct === null || o?.ecommerceTaxPct === ""
+                ? null
+                : o?.ecommerceTaxPct === undefined
+                  ? null
+                  : Math.max(0, Number(o.ecommerceTaxPct) || 0),
+            feeBaseMode:
+              o?.feeBaseMode === "revenue" ||
+              o?.feeBaseMode === "merchantReceived" ||
+              o?.feeBaseMode === "goodsTotal"
+                ? o.feeBaseMode
+                : "",
+          }))
+        : [];
+      setOpCostSettings({
+        ...cloneDefaultCostSettings(),
+        ...raw,
+        expressRules: rules,
+        shopFeeOverrides: overrides,
+        brandPointPct: Math.max(0, Number(raw.brandPointPct) || 0),
+        ecommerceTaxPct: Math.max(0, Number(raw.ecommerceTaxPct) || 0),
+        feeBaseMode:
+          raw.feeBaseMode === "goodsTotal" ||
+          raw.feeBaseMode === "merchantReceived" ||
+          raw.feeBaseMode === "revenue"
+            ? raw.feeBaseMode
+            : "revenue",
+        adAllocateMode:
+          raw.adAllocateMode === "by_order_count" ||
+          raw.adAllocateMode === "none" ||
+          raw.adAllocateMode === "by_gmv"
+            ? raw.adAllocateMode
+            : "by_gmv",
+      });
+      setOpReport(null);
+      showToast("经营参数已导入，请重新生成报表", "success");
+    } catch (error) {
+      reportError("导入经营参数", error);
+    }
+  }, [reportError, showToast]);
+
+  const handleExportAnomalies = useCallback(async () => {
+    if (!opReport) {
+      showToast("请先生成经营报表", "error");
+      return;
+    }
+    try {
+      const defaultName = `异常订单_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const result = await saveDataFile(defaultName);
+      if (result.canceled || !result.filePath) return;
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      const sheets: [string, any[][]][] = [
+        ["异常汇总", opReport.anomalySummaryTable || []],
+        ["负毛利订单", opReport.anomalyNegProfitTable || []],
+        ["未匹配成本订单", opReport.anomalyUnmatchedTable || []],
+        ["扣点税后变亏", opReport.anomalyFeeFlipTable || []],
+        ["高逆向规格", opReport.anomalyHighRefundSkuTable || []],
+        ["待补SKU", opReport.unmatchedTable || []],
+      ];
+      let any = false;
+      for (const [name, rows] of sheets) {
+        if (!rows || rows.length <= 1) continue;
+        any = true;
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+      }
+      if (!any) {
+        showToast("当前没有可导出的异常数据", "warning");
+        return;
+      }
+      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      await writeLocalFile(result.filePath, out.buffer);
+      const n =
+        (opReport.anomalySummaryTable || [])
+          .slice(1, 5)
+          .map((r) => `${r[0]}${r[1]}`)
+          .join(" / ") || "异常";
+      showToast(`异常订单已导出（${n}）`, "success");
+    } catch (error) {
+      reportError("导出异常订单", error);
+    }
+  }, [opReport, reportError, showToast]);
+
+  const handleBuildOperatingReport = useCallback(() => {
+    if (
+      opOrders.length === 0 &&
+      opBillLines.length === 0 &&
+      opProducts.length === 0 &&
+      opAds.length === 0
+    ) {
+      showToast('请先导入至少一种数据（订单/账务/商品/推广）', 'error');
+      return;
+    }
+    const report = buildOperatingReport(
+      opOrders,
+      opBillLines,
+      opProducts,
+      opAds,
+      opCostSettings,
+    );
+    setOpReport(report);
+    setOpView('summary');
+    setCurrentData(report.summaryTable);
+    setCurrentHeaders(report.summaryTable[0] || []);
+    setIsMerged(false);
+    showToast(
+      `报表已生成：毛利(扣广告) ¥${report.summary.estimatedProfitAfterAd.toFixed(2)} | 广告(仅日报) ¥${report.summary.adSpend.toFixed(0)} ROI ${report.summary.adRoi.toFixed(2)} | 总退款率 ${(report.summary.refundRateByCount * 100).toFixed(1)}%`,
+      "success",
+    );
+  }, [opOrders, opBillLines, opProducts, opAds, opCostSettings, showToast]);
+
+  const applyRankSort = useCallback(
+    (table: any[][] | undefined, mode: "profit" | "loss") => {
+      if (!table || table.length <= 1) return table || [];
+      if (mode === "profit") return table;
+      const header = table[0];
+      const rows = table.slice(1).slice().reverse();
+      const ranked = rows.map((r, i) => {
+        const copy = [...r];
+        if (typeof copy[0] === "number" || /^\d+$/.test(String(copy[0]))) {
+          copy[0] = i + 1;
+        }
+        return copy;
+      });
+      return [header, ...ranked];
+    },
+    [],
+  );
+
+  const handleShowOperatingView = useCallback(
+    (view: typeof opView, rankSort: "profit" | "loss" = opRankSort) => {
+      if (!opReport) return;
+      setOpView(view);
+      const unmatchedFallback = [
+        [
+          "待补键",
+          "商品名称",
+          "规格名称",
+          "商家编码-规格",
+          "商家编码-商品",
+          "商品ID",
+          "关联订单数",
+          "商家实收合计",
+          "样例订单号",
+        ],
+        ...opReport.unmatchedSkus.map((u) => [
+          u.key,
+          u.productName,
+          u.specName,
+          u.merchantSku,
+          u.merchantSpu,
+          u.productId,
+          u.count,
+          u.amount.toFixed(2),
+          u.sampleOrderIds,
+        ]),
+      ];
+      const tableMap: Record<string, any[][]> = {
+        summary: opReport.summaryTable,
+        orders: opReport.orderTable,
+        rates: opReport.rateTable,
+        shipLoss: opReport.shipLossTable,
+        billTypes: opReport.billTypeTable,
+        billWide: opReport.billWideTable,
+        ads: opReport.adTable,
+        products: opReport.productMapTable,
+        unmatched: opReport.unmatchedTable?.length
+          ? opReport.unmatchedTable
+          : unmatchedFallback,
+        period: opReport.periodTable,
+        express: opReport.expressTable,
+        shops: opReport.shopTable,
+        spuRank: applyRankSort(opReport.spuTable, rankSort),
+        skuRank: applyRankSort(opReport.skuTable, rankSort),
+        adAnalysis: opReport.adAnalysisTable || [],
+        productReturn: opReport.productReturnTable || [],
+        lossDiagnosis: opReport.lossDiagnosisTable || [],
+        bossOnePager: opReport.bossOnePagerTable || [],
+        anomalies: opReport.anomalySummaryTable || [],
+        anomalyNeg: opReport.anomalyNegProfitTable || [],
+        anomalyUnmatched: opReport.anomalyUnmatchedTable || [],
+        anomalyFeeFlip: opReport.anomalyFeeFlipTable || [],
+        anomalyHighSku: opReport.anomalyHighRefundSkuTable || [],
+      };
+      const table = tableMap[view] || opReport.summaryTable;
+      setCurrentData(table);
+      setCurrentHeaders(table[0] || []);
+      setIsMerged(false);
+    },
+    [opReport, opRankSort, applyRankSort],
+  );
+
+  const handleCopyUnmatchedSkus = useCallback(async () => {
+    if (!opReport || opReport.unmatchedSkus.length === 0) {
+      showToast("没有未匹配成本的 SKU", "warning");
+      return;
+    }
+    const table = opReport.unmatchedTable?.length
+      ? opReport.unmatchedTable
+      : [
+          [
+            "待补键",
+            "商品名称",
+            "规格名称",
+            "商家编码-规格",
+            "商家编码-商品",
+            "商品ID",
+            "关联订单数",
+            "商家实收合计",
+            "样例订单号",
+          ],
+          ...opReport.unmatchedSkus.map((u) => [
+            u.key,
+            u.productName,
+            u.specName,
+            u.merchantSku,
+            u.merchantSpu,
+            u.productId,
+            u.count,
+            u.amount.toFixed(2),
+            u.sampleOrderIds,
+          ]),
+        ];
+    const tsv = table
+      .map((row) => row.map((c) => String(c ?? "")).join("\t"))
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(tsv);
+      showToast(
+        `已复制 ${opReport.unmatchedSkus.length} 个待补 SKU（可粘贴到 Excel）`,
+        "success",
+      );
+    } catch {
+      showToast("复制失败，请手动从「未匹配成本」表导出", "error");
+    }
+  }, [opReport, showToast]);
+
+  const updateExpressRule = useCallback(
+    (index: number, patch: Partial<ExpressShipRule>) => {
+      setOpCostSettings((s) => {
+        const rules = s.expressRules.map((r, i) =>
+          i === index ? { ...r, ...patch } : r,
+        );
+        return { ...s, expressRules: rules };
+      });
+    },
+    [],
+  );
+
+  const handleResetOpCostSettings = useCallback(() => {
+    setOpCostSettings(cloneDefaultCostSettings());
+    showToast("已恢复默认运费/包材参数", "success");
+  }, [showToast]);
+
+  const handleApplyCostTemplate = useCallback(
+    (templateId: string) => {
+      const t = COST_SETTING_TEMPLATES.find((x) => x.id === templateId);
+      setOpCostSettings((s) => applyCostTemplate(s, templateId));
+      showToast(t ? `已套用模板：${t.name}` : "模板不存在", t ? "success" : "warning");
+    },
+    [showToast],
+  );
+
+  const handleAddShopFeeOverride = useCallback(() => {
+    setOpCostSettings((s) => ({
+      ...s,
+      shopFeeOverrides: [
+        ...(s.shopFeeOverrides || []),
+        {
+          shopName: "",
+          brandPointPct: null,
+          ecommerceTaxPct: null,
+          feeBaseMode: "",
+        } as ShopFeeOverride,
+      ],
+    }));
+  }, []);
+
+  const handleUpdateShopFeeOverride = useCallback(
+    (index: number, patch: Partial<ShopFeeOverride>) => {
+      setOpCostSettings((s) => {
+        const list = [...(s.shopFeeOverrides || [])];
+        list[index] = { ...list[index], ...patch };
+        return { ...s, shopFeeOverrides: list };
+      });
+    },
+    [],
+  );
+
+  const handleRemoveShopFeeOverride = useCallback((index: number) => {
+    setOpCostSettings((s) => ({
+      ...s,
+      shopFeeOverrides: (s.shopFeeOverrides || []).filter((_, i) => i !== index),
+    }));
+  }, []);
+
+  const handleSyncShopsToOverrides = useCallback(() => {
+    const names = new Set<string>();
+    for (const o of opOrders) names.add(normalizeShopName(o.shopName));
+    if (names.size === 0) {
+      showToast("请先导入订单（带店铺名）", "warning");
+      return;
+    }
+    setOpCostSettings((s) => {
+      const existing = new Map(
+        (s.shopFeeOverrides || []).map((x) => [
+          normalizeShopName(x.shopName),
+          x,
+        ]),
+      );
+      const merged: ShopFeeOverride[] = [];
+      for (const name of Array.from(names).sort()) {
+        merged.push(
+          existing.get(name) || {
+            shopName: name,
+            brandPointPct: null,
+            ecommerceTaxPct: null,
+            feeBaseMode: "",
+          },
+        );
+      }
+      // keep manual rows not in orders
+      for (const [k, v] of existing) {
+        if (!names.has(k) && String(v.shopName || "").trim()) merged.push(v);
+      }
+      return { ...s, shopFeeOverrides: merged };
+    });
+    showToast(`已同步 ${names.size} 个店铺到覆盖表`, "success");
+  }, [opOrders, showToast]);
+
+  const handleClearOperating = useCallback(() => {
+    setOpOrders([]);
+    setOpBillLines([]);
+    setOpProducts([]);
+    setOpAds([]);
+    setOpReport(null);
+    setOpSources([]);
+    showToast('已清空经营分析数据', 'success');
+  }, [showToast]);
+
+  const handleExportOperating = useCallback(async () => {
+    if (!opReport) {
+      showToast('请先生成经营报表', 'error');
+      return;
+    }
+    try {
+      const defaultName = `拼多多经营分析_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const result = await saveDataFile(defaultName);
+      if (result.canceled || !result.filePath) return;
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      const unmatchedRows = opReport.unmatchedTable?.length
+        ? opReport.unmatchedTable
+        : [
+            [
+              "待补键",
+              "商品名称",
+              "规格名称",
+              "商家编码-规格",
+              "商家编码-商品",
+              "商品ID",
+              "关联订单数",
+              "商家实收合计",
+              "样例订单号",
+            ],
+            ...opReport.unmatchedSkus.map((u) => [
+              u.key,
+              u.productName,
+              u.specName,
+              u.merchantSku,
+              u.merchantSpu,
+              u.productId,
+              u.count,
+              u.amount.toFixed(2),
+              u.sampleOrderIds,
+            ]),
+          ];
+      const sheets: [string, any[][]][] = [
+        ["经营汇总", opReport.summaryTable],
+        ["退款率", opReport.rateTable],
+        ["时段对比", opReport.periodTable],
+        ["分快递运费", opReport.expressTable],
+        ["订单毛利", opReport.orderTable],
+        ["损耗运费", opReport.shipLossTable],
+        ["账务类型", opReport.billTypeTable],
+        ["账务按单", opReport.billWideTable],
+        ["推广分天", opReport.adTable],
+        ["商品成本", opReport.productMapTable],
+        ["店铺对比", opReport.shopTable],
+        ["SPU毛利排行", opReport.spuTable],
+        ["规格毛利排行", opReport.skuTable],
+        ["推广分析", opReport.adAnalysisTable],
+        ["产品退货退款率", opReport.productReturnTable],
+        ["亏损诊断", opReport.lossDiagnosisTable],
+        ["老板一页纸", opReport.bossOnePagerTable],
+        ["待补SKU", unmatchedRows],
+        ["异常汇总", opReport.anomalySummaryTable || []],
+        ["负毛利订单", opReport.anomalyNegProfitTable || []],
+        ["未匹配成本订单", opReport.anomalyUnmatchedTable || []],
+        ["扣点税后变亏", opReport.anomalyFeeFlipTable || []],
+        ["高逆向规格", opReport.anomalyHighRefundSkuTable || []],
+      ];
+      for (const [name, rows] of sheets) {
+        if (!rows || rows.length === 0) continue;
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+      }
+      const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      await writeLocalFile(result.filePath, out.buffer);
+      showToast('经营分析 Excel 已导出', 'success');
+    } catch (error) {
+      reportError('导出经营分析', error);
+    }
+  }, [opReport, reportError, showToast]);
+
+
   // SKU映射
   const handleImportMapping = useCallback(async () => {
     try {
@@ -690,22 +1469,33 @@ function App() {
       if (!result.canceled && result.filePaths.length > 0) {
         const fileData = await processFile(result.filePaths[0]);
         if (fileData) {
-          setMappingFile(fileData);
-          const mappings: SKUMapping[] = fileData.data
-            .slice(1)
-            .map((row) => ({
-              platformName: String(row[0] || "").trim(),
-              internalCode: String(row[1] || "").trim(),
-              price: parseFloat(String(row[2] || 0).replace(/[¥$,]/g, "")) || 0,
-            }))
-            .filter((m) => m.platformName && m.internalCode);
-          setSkuMappings(mappings);
+          const ingested = ingestForOperating(fileData);
+          setMappingFile(ingested.normalized);
+          if (ingested.kind === "product_master" && ingested.skuMappings) {
+            setSkuMappings(ingested.skuMappings);
+            setOpProducts(ingested.products);
+            showToast(
+              `已识别商品资料：${ingested.products.length} 个规格，已生成 SKU 映射`,
+              "success",
+            );
+          } else {
+            const mappings: SKUMapping[] = ingested.normalized.data
+              .slice(1)
+              .map((row) => ({
+                platformName: String(row[0] || "").trim(),
+                internalCode: String(row[1] || "").trim(),
+                price:
+                  parseFloat(String(row[2] || 0).replace(/[¥$,]/g, "")) || 0,
+              }))
+              .filter((m) => m.platformName && m.internalCode);
+            setSkuMappings(mappings);
+          }
         }
       }
     } catch (error) {
       reportError("导入映射表", error);
     }
-  }, [reportError]);
+  }, [reportError, showToast]);
 
   const handleApplyMapping = useCallback(() => {
     if (currentData.length === 0 || skuMappings.length === 0) return;
@@ -779,19 +1569,22 @@ function App() {
       if (!result.canceled && result.filePaths.length > 0) {
         for (const filePath of result.filePaths) {
           const fileData = await processFile(filePath);
-          if (fileData) {
-            const record = parseBill(fileData);
-            setBillRecords((prev) => {
-              if (prev.find((r) => r.fileName === record.fileName)) return prev;
-              return [...prev, record];
-            });
+          if (!fileData) continue;
+          const ingested = ingestForOperating(fileData);
+          if (ingested.kind === "pdd_bill" && ingested.billRecord) {
+            setBillRecords((prev) => [...prev, ingested.billRecord!]);
+            setOpBillLines((prev) => [...prev, ...ingested.billLines]);
+            showToast(`已识别拼多多账务明细：${ingested.billLines.length} 行流水`, "success");
+          } else {
+            const record = parseBill(ingested.normalized);
+            setBillRecords((prev) => [...prev, record]);
           }
         }
       }
     } catch (error) {
       reportError("导入账单", error);
     }
-  }, [reportError]);
+  }, [reportError, showToast]);
 
   // 佣金明细导入
   const handleImportCommissionDetails = useCallback(async () => {
@@ -802,23 +1595,17 @@ function App() {
         if (fileData) {
           const details = parseCommissionDetails(fileData);
           if (details.length === 0) {
-            setToasts((prev) => [
-              ...prev,
-              { type: "error", message: "未找到佣金数据，请检查文件格式" },
-            ]);
+            showToast("未找到佣金数据，请检查文件格式", "error");
             return;
           }
           setCommissionDetails(details);
-          setToasts((prev) => [
-            ...prev,
-            { type: "success", message: `已导入 ${details.length} 条佣金明细` },
-          ]);
+          showToast(`已导入 ${details.length} 条佣金明细`, "success");
         }
       }
     } catch (error) {
       reportError("导入佣金明细", error);
     }
-  }, [reportError]);
+  }, [reportError, showToast]);
 
   // 佣金计提
   const handleGenerateAccrual = useCallback(() => {
@@ -1093,7 +1880,12 @@ function App() {
       const result = await saveDataFile(`清洗后数据.${format === "csv" ? "csv" : "xlsx"}`);
       if (!result.canceled && result.filePath) {
         if (format === "csv") {
-          await exportToCSV(currentData, result.filePath, encoding, delimiter);
+          await exportToCSV(
+            currentData,
+            result.filePath,
+            encoding || "utf-8",
+            delimiter,
+          );
         } else {
           await exportToExcel(currentData, result.filePath);
         }
@@ -1153,28 +1945,39 @@ function App() {
   const color = (p: string) => platformColor[p] || "bg-gray-100 text-gray-700";
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="app-shell">
       {runtimeNotice && (
         <div
-          className={`px-4 py-2 text-sm border-b ${desktopReady ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
+          className={`px-4 py-2 text-sm border-b ${desktopReady ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-800 border-amber-200"}`}
         >
           {runtimeNotice}
         </div>
       )}
 
-      <div className="bg-white border-b border-gray-200 px-4 py-1.5 flex items-center gap-1 flex-wrap">
+      <div className="app-header px-4 py-2.5 flex items-center gap-3 flex-wrap">
+        <div className="brand-badge mr-1">
+          <div className="brand-mark">财</div>
+          <div className="leading-tight">
+            <div className="text-sm font-bold text-slate-800">电商财务经营助手</div>
+            <div className="text-[11px] text-slate-500">拼多多经营分析 · 清洗对账</div>
+          </div>
+        </div>
+
+        <div className="h-8 w-px bg-slate-200 hidden md:block" />
+
         {[
-          { key: "data", label: "📊 数据处理" },
-          { key: "mapping", label: "🏷️ SKU映射" },
-          { key: "reconcile", label: "🧾 收款对账" },
-          { key: "bill", label: "📄 账单对账" },
-          { key: "rebate", label: "💰 品牌返利" },
-          { key: "monthly", label: "📅 月度汇总" },
+          { key: "operating", label: "经营分析" },
+          { key: "data", label: "数据处理" },
+          { key: "mapping", label: "SKU映射" },
+          { key: "reconcile", label: "收款对账" },
+          { key: "bill", label: "账单对账" },
+          { key: "rebate", label: "品牌返利" },
+          { key: "monthly", label: "月度汇总" },
         ].map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as Tab)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeTab === tab.key ? "bg-blue-100 text-blue-700 border border-blue-300" : "text-gray-600 hover:bg-gray-100"}`}
+            className={`tab-pill ${activeTab === tab.key ? "tab-pill-active" : "tab-pill-idle"}`}
           >
             {tab.label}
           </button>
@@ -1218,6 +2021,1346 @@ function App() {
           )}
         </div>
       </div>
+
+
+
+      {/* ========== 经营分析（拼多多四表） ========== */}
+      {activeTab === "operating" && (
+        <div className="flex-1 overflow-auto p-6 bg-transparent">
+          <div className="max-w-[1680px] mx-auto space-y-4 w-full">
+            <div className="panel-card p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-bold text-slate-800 tracking-tight">
+                  拼多多经营分析
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  适配订单/账务/商品/推广四表。支持多店铺对比、SPU/规格毛利排行、待补SKU带品名规格导出。
+                  导入前填写店铺/账号名，可分别导入多家后统一对比。
+                </p>
+              </div>
+
+              <div className="mb-4 flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1 text-sm min-w-[220px]">
+                  <span className="text-xs text-gray-500">
+                    当前导入店铺/账号名（多店对比用）
+                  </span>
+                  <input
+                    value={opShopLabel}
+                    onChange={(e) => setOpShopLabel(e.target.value)}
+                    placeholder="例如：主店 / 小号A / 旗舰店"
+                    className="soft-input"
+                  />
+                </label>
+                <div className="text-xs text-gray-500 pb-2">
+                  留空则尝试从文件名识别，否则记为「默认店铺」。
+                  商品资料全店共用；订单/账务/推广按店铺标签分开。
+                </div>
+              </div>
+
+              <div
+                onDragEnter={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOpDragOver(true);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOpDragOver(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOpDragOver(false);
+                }}
+                onDrop={handleOperatingDrop}
+                className={`mb-4 rounded-xl border-2 border-dashed p-4 transition-colors ${
+                  opDragOver
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-slate-200 bg-slate-50/80"
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">
+                      拖入多个文件自动识别类型
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                      支持一次拖入订单/账务/商品资料/推广（csv/xlsx/xls），自动分流；也可点下方按钮选择。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleOperatingImport()}
+                    disabled={!desktopReady}
+                    className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40"
+                  >
+                    选择文件（可多选）
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                <button
+                  onClick={() => handleOperatingImport("pdd_orders")}
+                  className="border border-blue-200/80 bg-gradient-to-br from-blue-50 to-indigo-50 hover:shadow-md hover:-translate-y-0.5 transition rounded-2xl p-4 text-left"
+                >
+                  <div className="font-medium text-blue-800">1. 订单导出</div>
+                  <div className="text-xs text-blue-600 mt-1">
+                    orders_export*.csv
+                  </div>
+                  <div className="text-sm mt-2 text-gray-700">
+                    已导入 <strong>{opOrders.length}</strong> 单
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleOperatingImport("pdd_bill")}
+                  className="border border-emerald-200/80 bg-gradient-to-br from-emerald-50 to-teal-50 hover:shadow-md hover:-translate-y-0.5 transition rounded-2xl p-4 text-left"
+                >
+                  <div className="font-medium text-emerald-800">2. 账务明细</div>
+                  <div className="text-xs text-emerald-600 mt-1">
+                    pdd-mall-bill-detail*.csv
+                  </div>
+                  <div className="text-sm mt-2 text-gray-700">
+                    已导入 <strong>{opBillLines.length}</strong> 行流水
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleOperatingImport("product_master")}
+                  className="border border-violet-200/80 bg-gradient-to-br from-violet-50 to-purple-50 hover:shadow-md hover:-translate-y-0.5 transition rounded-2xl p-4 text-left"
+                >
+                  <div className="font-medium text-violet-800">3. 商品资料</div>
+                  <div className="text-xs text-violet-600 mt-1">
+                    商品资料*.xlsx（成本）
+                  </div>
+                  <div className="text-sm mt-2 text-gray-700">
+                    已导入 <strong>{opProducts.length}</strong> 个规格
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleOperatingImport("ad_daily")}
+                  className="border border-orange-200/80 bg-gradient-to-br from-orange-50 to-amber-50 hover:shadow-md hover:-translate-y-0.5 transition rounded-2xl p-4 text-left"
+                >
+                  <div className="font-medium text-orange-800">4. 推广分天</div>
+                  <div className="text-xs text-orange-600 mt-1">
+                    商品推广*分天数据*.xls
+                  </div>
+                  <div className="text-sm mt-2 text-gray-700">
+                    已导入 <strong>{opAds.length}</strong> 天
+                  </div>
+                </button>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl p-4 mb-4 bg-gray-50 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-gray-800">运费 / 包材 / 退货 / 广告参数</div>
+                  <button
+                    type="button"
+                    onClick={handleResetOpCostSettings}
+                    className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-white"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">默认首重(kg)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={opCostSettings.firstWeightKg}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          firstWeightKg: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">默认首重运费(元)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={opCostSettings.firstWeightFee}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          firstWeightFee: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">默认续重(kg)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={opCostSettings.additionalWeightKg}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          additionalWeightKg: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">默认续重运费(元)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={opCostSettings.additionalWeightFee}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          additionalWeightFee: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">默认包材价(元/件)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={opCostSettings.defaultPackCost}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          defaultPackCost: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">缺省单件重量(kg)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={opCostSettings.defaultWeightKg}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          defaultWeightKg: Number(e.target.value) || 0.1,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">退货损耗比例(0-1)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={opCostSettings.returnRestockRate}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          returnRestockRate: Math.min(
+                            1,
+                            Math.max(0, Number(e.target.value) || 0),
+                          ),
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">二次包装/入库(元/单)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={opCostSettings.returnRepackCost}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          returnRepackCost: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">推广费分摊</span>
+                    <select
+                      value={opCostSettings.adAllocateMode}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          adAllocateMode: e.target
+                            .value as CostSettings["adAllocateMode"],
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1 bg-white"
+                    >
+                      <option value="by_gmv">按成交额占比</option>
+                      <option value="by_order_count">按订单数均摊</option>
+                      <option value="none">不摊到单(仅汇总扣)</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">品牌扣点(%)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={opCostSettings.brandPointPct ?? 0}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          brandPointPct: Math.min(
+                            100,
+                            Math.max(0, Number(e.target.value) || 0),
+                          ),
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                      placeholder="如 5 表示 5%"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">电商税(%)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={opCostSettings.ecommerceTaxPct ?? 0}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          ecommerceTaxPct: Math.min(
+                            100,
+                            Math.max(0, Number(e.target.value) || 0),
+                          ),
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1"
+                      placeholder="如 1 表示 1%"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">扣点/税计算基数</span>
+                    <select
+                      value={opCostSettings.feeBaseMode || "revenue"}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          feeBaseMode: e.target
+                            .value as CostSettings["feeBaseMode"],
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1 bg-white"
+                    >
+                      <option value="revenue">确认收入（推荐）</option>
+                      <option value="merchantReceived">商家实收</option>
+                      <option value="goodsTotal">商品总价</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 mt-5">
+                    <input
+                      type="checkbox"
+                      checked={opCostSettings.forceDefaultPack}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          forceDefaultPack: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="text-xs text-gray-700">强制统一包材价</span>
+                  </label>
+                  <label className="flex items-center gap-2 mt-5">
+                    <input
+                      type="checkbox"
+                      checked={opCostSettings.countProductCostOnRefundedShip}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          countProductCostOnRefundedShip: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="text-xs text-gray-700">
+                      发货后退款仍计全额商品成本
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 mt-5">
+                    <input
+                      type="checkbox"
+                      checked={opCostSettings.usePostageIncome}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          usePostageIncome: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="text-xs text-gray-700">订单邮费抵扣运费成本</span>
+                  </label>
+                </div>
+
+                <div className="mt-3 p-3 rounded-xl border border-indigo-100 bg-indigo-50/50">
+                  <div className="mb-2">
+                    <div className="text-xs font-semibold text-indigo-900">一键参数模板</div>
+                    <div className="text-[11px] text-indigo-700/80">
+                      只覆盖模板字段，其余设置与店铺覆盖保留
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {COST_SETTING_TEMPLATES.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        title={t.desc}
+                        onClick={() => handleApplyCostTemplate(t.id)}
+                        className="px-2.5 py-1.5 text-xs rounded-lg border border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-100"
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-3 p-3 rounded-xl border border-violet-100 bg-violet-50/40">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <div className="text-xs font-semibold text-violet-900">
+                        店铺扣点 / 税覆盖
+                      </div>
+                      <div className="text-[11px] text-violet-700/80">
+                        百分比留空=跟随全局默认；多店不同扣点时用这个
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSyncShopsToOverrides}
+                        className="px-2.5 py-1 text-xs rounded-lg border border-violet-200 bg-white text-violet-800 hover:bg-violet-100"
+                      >
+                        从订单同步店铺
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddShopFeeOverride}
+                        className="px-2.5 py-1 text-xs rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+                      >
+                        + 添加店铺
+                      </button>
+                    </div>
+                  </div>
+                  {(opCostSettings.shopFeeOverrides || []).length === 0 ? (
+                    <div className="text-[11px] text-slate-500">
+                      暂无覆盖行。导入订单后点「从订单同步店铺」，再按店填扣点/税。
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-500">
+                            <th className="py-1 pr-2 font-medium">店铺名</th>
+                            <th className="py-1 pr-2 font-medium">扣点%</th>
+                            <th className="py-1 pr-2 font-medium">税%</th>
+                            <th className="py-1 pr-2 font-medium">基数</th>
+                            <th className="py-1 font-medium">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(opCostSettings.shopFeeOverrides || []).map((row, idx) => (
+                            <tr key={idx} className="border-t border-violet-100/80">
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  className="border rounded-lg px-2 py-1 w-40 bg-white"
+                                  value={row.shopName}
+                                  placeholder="店铺名"
+                                  onChange={(e) =>
+                                    handleUpdateShopFeeOverride(idx, {
+                                      shopName: e.target.value,
+                                    })
+                                  }
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  className="border rounded-lg px-2 py-1 w-20 bg-white"
+                                  placeholder="全局"
+                                  value={row.brandPointPct ?? ""}
+                                  onChange={(e) =>
+                                    handleUpdateShopFeeOverride(idx, {
+                                      brandPointPct:
+                                        e.target.value === ""
+                                          ? null
+                                          : Math.max(0, Number(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  className="border rounded-lg px-2 py-1 w-20 bg-white"
+                                  placeholder="全局"
+                                  value={row.ecommerceTaxPct ?? ""}
+                                  onChange={(e) =>
+                                    handleUpdateShopFeeOverride(idx, {
+                                      ecommerceTaxPct:
+                                        e.target.value === ""
+                                          ? null
+                                          : Math.max(0, Number(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <select
+                                  className="border rounded-lg px-2 py-1 bg-white"
+                                  value={row.feeBaseMode || ""}
+                                  onChange={(e) =>
+                                    handleUpdateShopFeeOverride(idx, {
+                                      feeBaseMode: e.target
+                                        .value as ShopFeeOverride["feeBaseMode"],
+                                    })
+                                  }
+                                >
+                                  <option value="">跟随全局</option>
+                                  <option value="revenue">确认收入</option>
+                                  <option value="merchantReceived">商家实收</option>
+                                  <option value="goodsTotal">商品总价</option>
+                                </select>
+                              </td>
+                              <td className="py-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveShopFeeOverride(idx)}
+                                  className="text-red-600 hover:underline"
+                                >
+                                  删除
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-sm font-medium text-gray-800 mb-2">
+                    分快递运费规则（优先于默认首续重）
+                  </div>
+                  <div className="overflow-x-auto border border-gray-200 rounded-lg bg-white">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-100 text-gray-600">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left">快递</th>
+                          <th className="px-2 py-1.5 text-left">匹配关键词</th>
+                          <th className="px-2 py-1.5 text-left">首重kg</th>
+                          <th className="px-2 py-1.5 text-left">首重费</th>
+                          <th className="px-2 py-1.5 text-left">续重kg</th>
+                          <th className="px-2 py-1.5 text-left">续重费</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {opCostSettings.expressRules.map((rule, idx) => (
+                          <tr
+                            key={rule.label + idx}
+                            className="border-t border-gray-100"
+                          >
+                            <td className="px-2 py-1">
+                              <input
+                                value={rule.label}
+                                onChange={(e) =>
+                                  updateExpressRule(idx, {
+                                    label: e.target.value,
+                                  })
+                                }
+                                className="w-20 border rounded px-1 py-0.5"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                value={rule.keywords}
+                                onChange={(e) =>
+                                  updateExpressRule(idx, {
+                                    keywords: e.target.value,
+                                  })
+                                }
+                                className="w-40 border rounded px-1 py-0.5"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={rule.firstWeightKg}
+                                onChange={(e) =>
+                                  updateExpressRule(idx, {
+                                    firstWeightKg: Number(e.target.value) || 0,
+                                  })
+                                }
+                                className="w-16 border rounded px-1 py-0.5"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={rule.firstWeightFee}
+                                onChange={(e) =>
+                                  updateExpressRule(idx, {
+                                    firstWeightFee:
+                                      Number(e.target.value) || 0,
+                                  })
+                                }
+                                className="w-16 border rounded px-1 py-0.5"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={rule.additionalWeightKg}
+                                onChange={(e) =>
+                                  updateExpressRule(idx, {
+                                    additionalWeightKg:
+                                      Number(e.target.value) || 1,
+                                  })
+                                }
+                                className="w-16 border rounded px-1 py-0.5"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={rule.additionalWeightFee}
+                                onChange={(e) =>
+                                  updateExpressRule(idx, {
+                                    additionalWeightFee:
+                                      Number(e.target.value) || 0,
+                                  })
+                                }
+                                className="w-16 border rounded px-1 py-0.5"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-gray-500">
+                  毛利=确认收入-商品成本-包材-净运费(运费-邮费)-平台费用-退货损耗-二次包装-品牌扣点-电商税-(分摊广告)。扣点/税可填百分比，按所选基数计提。
+                  参数自动记住（本机 localStorage）。改完参数后请重新点「生成经营报表」。
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button
+                  onClick={handleBuildOperatingReport}
+                  className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
+                >
+                  生成经营报表
+                </button>
+                <button
+                  onClick={handleExportOperating}
+                  disabled={!opReport}
+                  className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-40"
+                >
+                  导出 Excel
+                </button>
+                <button
+                  onClick={handleExportAnomalies}
+                  disabled={!opReport}
+                  className="px-4 py-2 rounded-lg bg-rose-600 text-white text-sm hover:bg-rose-700 disabled:opacity-40"
+                >
+                  导出异常订单
+                </button>
+                <button
+                  onClick={handleCopyUnmatchedSkus}
+                  disabled={!opReport || opReport.unmatchedSkus.length === 0}
+                  className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm hover:bg-amber-600 disabled:opacity-40"
+                >
+                  复制待补SKU
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportCostSettings}
+                  className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50"
+                >
+                  导出参数JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportCostSettings}
+                  disabled={!desktopReady}
+                  className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50 disabled:opacity-40"
+                >
+                  导入参数JSON
+                </button>
+                <button
+                  onClick={handleClearOperating}
+                  className="px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  清空
+                </button>
+              </div>
+
+              {opSources.length > 0 && (
+                <div className="text-xs text-gray-500 mb-3">
+                  来源：
+                  {opSources.map((s) => (
+                    <span
+                      key={s.kind}
+                      className="inline-block mr-2 px-2 py-0.5 bg-gray-100 rounded"
+                    >
+                      {sourceKindLabel(s.kind as any)}
+                      {s.shop ? ` · ${s.shop}` : ""} · {s.name} · {s.rows}行
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {opReport && (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">商家实收</div>
+                      <div className="text-lg font-bold">
+                        ¥{opReport.summary.merchantReceived.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">商品成本</div>
+                      <div className="text-lg font-bold text-violet-700">
+                        ¥{opReport.summary.costTotal.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">包材合计</div>
+                      <div className="text-lg font-bold text-violet-600">
+                        ¥{opReport.summary.packTotal.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-sky-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">运费 / 邮费抵扣 / 净运费</div>
+                      <div className="text-sm font-bold text-sky-700">
+                        ¥{opReport.summary.shippingTotal.toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        邮费+¥{opReport.summary.postageIncomeTotal.toFixed(2)} · 净¥
+                        {opReport.summary.netShippingTotal.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">损耗运费</div>
+                      <div className="text-lg font-bold text-red-600">
+                        ¥{opReport.summary.shippingLossTotal.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-rose-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">退货损耗 / 二次包装</div>
+                      <div className="text-sm font-bold text-rose-700">
+                        ¥{opReport.summary.returnLossTotal.toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        二次包装 ¥{opReport.summary.repackCostTotal.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-violet-50 rounded-xl p-3 min-h-[96px]">
+                      <div className="text-xs text-gray-500 leading-snug">
+                        品牌扣点 ({opReport.summary.brandPointPct || 0}%)
+                      </div>
+                      <div className="text-lg font-bold text-violet-700">
+                        ¥{(opReport.summary.brandPointTotal || 0).toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">
+                        基数=
+                        {opReport.summary.feeBaseMode === "goodsTotal"
+                          ? "商品总价"
+                          : opReport.summary.feeBaseMode === "merchantReceived"
+                            ? "商家实收"
+                            : "确认收入"}
+                      </div>
+                    </div>
+                    <div className="bg-indigo-50 rounded-xl p-3 min-h-[96px]">
+                      <div className="text-xs text-gray-500 leading-snug">
+                        电商税 ({opReport.summary.ecommerceTaxPct || 0}%)
+                      </div>
+                      <div className="text-lg font-bold text-indigo-700">
+                        ¥{(opReport.summary.ecommerceTaxTotal || 0).toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">
+                        与扣点同基数计提 · 可在上方参数区修改%
+                      </div>
+                    </div>
+                    <div className="bg-amber-50 rounded-xl p-3 min-h-[96px]">
+                      <div className="text-xs text-gray-500 leading-snug">总退款率(笔/额 · /全部订单)</div>
+                      <div className="text-lg font-bold text-amber-700">
+                        {(opReport.summary.refundRateByCount * 100).toFixed(1)}%
+                        <span className="text-xs font-normal text-gray-500">
+                          {" "}/{(opReport.summary.refundRateByAmount * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">
+                        {opReport.summary.refundOrderCount}/{opReport.summary.orderCount} 单
+                      </div>
+                    </div>
+                    <div className="bg-orange-50 rounded-xl p-3 min-h-[96px]">
+                      <div className="text-xs text-gray-500 leading-snug">发货后退款率(笔/额 · /已发货)</div>
+                      <div className="text-lg font-bold text-orange-700">
+                        {(opReport.summary.postShipRefundRateByCount * 100).toFixed(1)}%
+                        <span className="text-xs font-normal text-gray-500">
+                          {" "}/
+                          {(opReport.summary.postShipRefundRateByAmount * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">
+                        {opReport.summary.postShipRefundCount}/{opReport.summary.shippedOrderCount}
+                        {" = "}发货未收货{opReport.summary.shipOnlyRefundCount}
+                        +签收退{opReport.summary.signedReturnCount}
+                        （=退货退款主口径）
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3 min-h-[88px]">
+                      <div className="text-xs text-gray-500">广告花费(日报) / 已分摊</div>
+                      <div className="text-sm font-bold text-red-600">
+                        ¥{opReport.summary.adSpend.toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        分摊 ¥{opReport.summary.adAllocatedTotal.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-emerald-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">毛利(扣成本包材净运费等)</div>
+                      <div className="text-lg font-bold text-emerald-700">
+                        ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-green-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">毛利(再扣广告)</div>
+                      <div className="text-lg font-bold text-green-700">
+                        ¥{opReport.summary.estimatedProfitAfterAd.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">毛利率 / 已发货未成交</div>
+                      <div className="text-lg font-bold text-blue-700">
+                        {(opReport.summary.profitMargin * 100).toFixed(1)}%
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        未成交 {opReport.summary.shipNotDealCount} 单
+                      </div>
+                    </div>
+                    <div className="bg-rose-50 rounded-xl p-3 min-h-[96px]">
+                      <div className="text-xs text-gray-500 leading-snug">
+                        退货退款率(主 · 发货后全部退/已发货)
+                      </div>
+                      <div className="text-lg font-bold text-rose-700">
+                        {(opReport.summary.returnRefundRateByCount * 100).toFixed(1)}%
+                        <span className="text-xs font-normal text-gray-500">
+                          {" "}/{(opReport.summary.returnRefundRateByAmount * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-600 mt-0.5 leading-relaxed break-words">
+                        {opReport.summary.returnRefundCount}/
+                        {opReport.summary.shippedOrderCount} 已发货
+                        {" = "}未收货退{opReport.summary.shipOnlyRefundCount}
+                        +签收退{opReport.summary.signedReturnCount}
+                        <br />
+                        对照全部 {(opReport.summary.returnRefundRateOfAllByCount * 100).toFixed(1)}%
+                        · 签收后{(opReport.summary.signedReturnRateByCount * 100).toFixed(2)}%
+                      </div>
+                    </div>
+                    <div className="bg-fuchsia-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500">广告ROI(仅推广日报)</div>
+                      <div className="text-lg font-bold text-fuchsia-700">
+                        {opReport.summary.adRoi.toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        花费 ¥{opReport.summary.adSpend.toFixed(0)}
+                        {opReport.summary.billAdExpenseExcluded > 0
+                          ? ` · 账务广告已排除 ¥${opReport.summary.billAdExpenseExcluded.toFixed(0)}`
+                          : ""}
+                      </div>
+                    </div>
+                    {opReport.summary.latestMonth && (
+                      <div className="bg-indigo-50 rounded-lg p-3 col-span-2 md:col-span-4">
+                        <div className="text-xs text-gray-500 mb-1">
+                          时段对比（最新月 vs 上月）
+                        </div>
+                        {(() => {
+                          const months = opReport.summary.months || [];
+                          const latest = months.find(
+                            (m) => m.month === opReport.summary.latestMonth,
+                          );
+                          const prev = months.find(
+                            (m) => m.month === opReport.summary.prevMonth,
+                          );
+                          if (!latest) {
+                            return (
+                              <div className="text-sm text-gray-500">暂无分月数据</div>
+                            );
+                          }
+                          const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+                          const delta = (a: number, b?: number) => {
+                            if (b === undefined || b === null) return "—";
+                            const d = a - b;
+                            const sign = d > 0 ? "+" : "";
+                            return `${sign}${d.toFixed(2)}`;
+                          };
+                          return (
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                              <div>
+                                <div className="text-gray-500">
+                                  {latest.month} 退款率(笔)
+                                </div>
+                                <div className="font-semibold">
+                                  {pct(latest.refundRateByCount)}
+                                  {prev && (
+                                    <span className="text-gray-400 font-normal">
+                                      {" "}
+                                      (上月 {pct(prev.refundRateByCount)})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-gray-500">损耗运费</div>
+                                <div className="font-semibold">
+                                  ¥{latest.shippingLossTotal.toFixed(2)}
+                                  {prev && (
+                                    <span className="text-gray-400 font-normal">
+                                      {" "}
+                                      (
+                                      {delta(
+                                        latest.shippingLossTotal,
+                                        prev.shippingLossTotal,
+                                      )}
+                                      )
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-gray-500">毛利(扣广告)</div>
+                                <div className="font-semibold text-green-700">
+                                  ¥{latest.profitAfterAd.toFixed(2)}
+                                  {prev && (
+                                    <span className="text-gray-400 font-normal">
+                                      {" "}
+                                      (
+                                      {delta(
+                                        latest.profitAfterAd,
+                                        prev.profitAfterAd,
+                                      )}
+                                      )
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-gray-500">毛利率</div>
+                                <div className="font-semibold">
+                                  {pct(latest.profitMargin)}
+                                  {prev && (
+                                    <span className="text-gray-400 font-normal">
+                                      {" "}
+                                      (上月 {pct(prev.profitMargin)})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-gradient-to-r from-rose-50 to-amber-50 border border-rose-100 rounded-xl p-4 mb-4">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="font-medium text-gray-800 text-sm">本月亏在哪（速览）</div>
+                      <button
+                        type="button"
+                        className="text-xs text-blue-600 hover:underline"
+                        onClick={() => handleShowOperatingView("lossDiagnosis")}
+                      >
+                        查看完整诊断 →
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div className="bg-white/80 rounded-lg p-2">
+                        <div className="text-gray-500">广告(日报)</div>
+                        <div className="font-semibold text-red-600">¥{opReport.summary.adSpend.toFixed(2)}</div>
+                      </div>
+                      <div className="bg-white/80 rounded-lg p-2">
+                        <div className="text-gray-500">损耗运费</div>
+                        <div className="font-semibold text-red-600">¥{opReport.summary.shippingLossTotal.toFixed(2)}</div>
+                      </div>
+                      <div className="bg-white/80 rounded-lg p-2">
+                        <div className="text-gray-500">退货损耗+二次包装</div>
+                        <div className="font-semibold text-red-600">
+                          ¥{(opReport.summary.returnLossTotal + opReport.summary.repackCostTotal).toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="bg-white/80 rounded-lg p-2">
+                        <div className="text-gray-500">未匹配成本</div>
+                        <div className="font-semibold text-amber-700">
+                          {opReport.summary.costUnmatchedOrders} 单 / ¥{opReport.summary.costUnmatchedAmount.toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 text-white rounded-xl p-4 mb-4 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                      <div>
+                        <div className="text-sm font-semibold">毛利被谁吃掉了（对照）</div>
+                        <div className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                          底座毛利 → 扣退货相关 → 扣扣点税 → 扣广告 = 最终毛利
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] text-slate-300">
+                        合计吃掉{" "}
+                        <span className="text-amber-300 font-semibold text-sm">
+                          ¥{(opReport.summary.marginEatenTotal || 0).toFixed(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 text-sm">
+                      <div className="rounded-lg bg-white/10 p-2.5 border border-white/10">
+                        <div className="text-[11px] text-slate-300">① 经营底座</div>
+                        <div className="text-lg font-bold text-emerald-300">
+                          ¥{(opReport.summary.profitOpsBase || 0).toFixed(0)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          收入-成本-包材-运费-平台费
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white/10 p-2.5 border border-white/10">
+                        <div className="text-[11px] text-slate-300">② 退货相关吃掉</div>
+                        <div className="text-lg font-bold text-rose-300">
+                          -¥{(opReport.summary.returnRelatedCost || 0).toFixed(0)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          损耗+二次包装 · 另有损耗运费 ¥
+                          {(opReport.summary.shippingLossTotal || 0).toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white/10 p-2.5 border border-white/10">
+                        <div className="text-[11px] text-slate-300">③ 品牌扣点</div>
+                        <div className="text-lg font-bold text-violet-300">
+                          -¥{(opReport.summary.brandPointTotal || 0).toFixed(0)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          全局 {opReport.summary.brandPointPct || 0}%
+                          （可按店覆盖）
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white/10 p-2.5 border border-white/10">
+                        <div className="text-[11px] text-slate-300">④ 电商税</div>
+                        <div className="text-lg font-bold text-indigo-300">
+                          -¥{(opReport.summary.ecommerceTaxTotal || 0).toFixed(0)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          全局 {opReport.summary.ecommerceTaxPct || 0}%
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white/10 p-2.5 border border-white/10">
+                        <div className="text-[11px] text-slate-300">⑤ 广告吃掉</div>
+                        <div className="text-lg font-bold text-amber-300">
+                          -¥{(opReport.summary.adSpend || 0).toFixed(0)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          仅推广日报 · ROI{" "}
+                          {(opReport.summary.adRoi || 0).toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-emerald-500/20 p-2.5 border border-emerald-400/30">
+                        <div className="text-[11px] text-emerald-200">⑥ 最终毛利</div>
+                        <div className="text-lg font-bold text-emerald-200">
+                          ¥{opReport.summary.estimatedProfitAfterAd.toFixed(0)}
+                        </div>
+                        <div className="text-[10px] text-emerald-100/70 mt-0.5">
+                          毛利率{" "}
+                          {(opReport.summary.profitMargin * 100).toFixed(1)}% · 未扣广告
+                          ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+                      {(() => {
+                        const ad = opReport.summary.adSpend || 0;
+                        const fee =
+                          (opReport.summary.brandPointTotal || 0) +
+                          (opReport.summary.ecommerceTaxTotal || 0);
+                        const ret =
+                          (opReport.summary.returnRelatedCost || 0) +
+                          (opReport.summary.shippingLossTotal || 0);
+                        const sum = ad + fee + ret || 1;
+                        const bar = (v: number, color: string, label: string) => (
+                          <div key={label} className="bg-white/5 rounded-lg p-2 border border-white/10">
+                            <div className="flex justify-between mb-1">
+                              <span className="text-slate-300">{label}</span>
+                              <span className="text-white font-medium">
+                                ¥{v.toFixed(0)} · {((v / sum) * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                            <div className="h-1.5 rounded bg-white/10 overflow-hidden">
+                              <div
+                                className={`h-full ${color}`}
+                                style={{ width: `${Math.min(100, (v / sum) * 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                        return [
+                          bar(ad, "bg-amber-400", "广告占比"),
+                          bar(fee, "bg-violet-400", "扣点+税占比"),
+                          bar(ret, "bg-rose-400", "退货相关占比"),
+                        ];
+                      })()}
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-800">退款结构一览（口径对照）</div>
+                        <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                          总退款 = 未发货退 + 发货未收货退 + 签收退；退货退款主口径 = 发货后全部退 / 已发货
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleShowOperatingView("rates")}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100"
+                      >
+                        打开退款率明细表
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+                      <div className="rounded-lg bg-amber-50 border border-amber-100 p-3">
+                        <div className="text-xs text-amber-800 font-medium">① 总退款</div>
+                        <div className="text-xl font-bold text-amber-700 mt-1">
+                          {(opReport.summary.refundRateByCount * 100).toFixed(1)}%
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1 break-words leading-relaxed">
+                          {opReport.summary.refundOrderCount} / {opReport.summary.orderCount} 单
+                          <br />
+                          金额率 {(opReport.summary.refundRateByAmount * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+                        <div className="text-xs text-slate-700 font-medium">② 未发货退款</div>
+                        <div className="text-xl font-bold text-slate-800 mt-1">
+                          {opReport.summary.orderCount > 0
+                            ? (
+                                (opReport.summary.unshippedRefundCount /
+                                  opReport.summary.orderCount) *
+                                100
+                              ).toFixed(1)
+                            : "0.0"}
+                          %
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1 break-words leading-relaxed">
+                          {opReport.summary.unshippedRefundCount} 单 · ¥
+                          {opReport.summary.unshippedRefundAmount.toFixed(0)}
+                          <br />
+                          分母：全部订单
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-orange-50 border border-orange-100 p-3">
+                        <div className="text-xs text-orange-800 font-medium">③ 发货后退款</div>
+                        <div className="text-xl font-bold text-orange-700 mt-1">
+                          {(opReport.summary.postShipRefundRateByCount * 100).toFixed(1)}%
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1 break-words leading-relaxed">
+                          {opReport.summary.postShipRefundCount} / {opReport.summary.shippedOrderCount}{" "}
+                          已发货
+                          <br />
+                          其中未收货退 {opReport.summary.shipOnlyRefundCount} + 签收退{" "}
+                          {opReport.summary.signedReturnCount}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-rose-50 border border-rose-100 p-3">
+                        <div className="text-xs text-rose-800 font-medium">④ 退货退款（发货后全部）</div>
+                        <div className="text-xl font-bold text-rose-700 mt-1">
+                          {(opReport.summary.returnRefundRateByCount * 100).toFixed(1)}%
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1 break-words leading-relaxed">
+                          主：{opReport.summary.returnRefundCount} /{" "}
+                          {opReport.summary.shippedOrderCount} 已发货
+                          <br />
+                          其中未收货退 {opReport.summary.shipOnlyRefundCount} + 签收退{" "}
+                          {opReport.summary.signedReturnCount}
+                          <br />
+                          签收后辅：{(opReport.summary.signedReturnRateByCount * 100).toFixed(2)}% (
+                          {opReport.summary.signedReturnCount}/
+                          {opReport.summary.receivedRelatedCount})
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-nowrap gap-2 mb-3 overflow-x-auto pb-1">
+                    {[
+                      { key: "summary", label: "汇总" },
+                      { key: "bossOnePager", label: "老板一页纸" },
+                      { key: "anomalies", label: "异常找坑" },
+                      { key: "lossDiagnosis", label: "本月亏在哪" },
+                      { key: "rates", label: "退款率" },
+                      { key: "period", label: "时段对比" },
+                      { key: "shops", label: "店铺对比" },
+                      { key: "spuRank", label: "SPU毛利排行" },
+                      { key: "skuRank", label: "规格毛利排行" },
+                      { key: "adAnalysis", label: "推广分析" },
+                      { key: "productReturn", label: "产品退货退款率" },
+                      { key: "express", label: "分快递运费" },
+                      { key: "orders", label: "订单毛利" },
+                      {
+                        key: "shipLoss",
+                        label: `损耗运费(${opReport.summary.shipNotDealCount})`,
+                      },
+                      { key: "billTypes", label: "账务类型" },
+                      { key: "billWide", label: "账务按单" },
+                      { key: "ads", label: "推广日报" },
+                      { key: "products", label: "商品成本" },
+                      {
+                        key: "unmatched",
+                        label: `待补SKU(${opReport.summary.costUnmatchedOrders})`,
+                      },
+                    ].map((v) => (
+                      <button
+                        key={v.key}
+                        onClick={() => handleShowOperatingView(v.key as any)}
+                        className={`px-3 py-1.5 rounded-lg text-xs border ${
+                          opView === v.key
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                        }`}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {(opView === "anomalies" ||
+                    opView === "anomalyNeg" ||
+                    opView === "anomalyUnmatched" ||
+                    opView === "anomalyFeeFlip" ||
+                    opView === "anomalyHighSku") &&
+                    opReport && (
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <span className="text-xs text-gray-500">异常明细：</span>
+                      {[
+                        { key: "anomalies", label: "汇总" },
+                        {
+                          key: "anomalyNeg",
+                          label: `负毛利(${Math.max(0, (opReport.anomalyNegProfitTable?.length || 1) - 1)})`,
+                        },
+                        {
+                          key: "anomalyUnmatched",
+                          label: `未匹配(${Math.max(0, (opReport.anomalyUnmatchedTable?.length || 1) - 1)})`,
+                        },
+                        {
+                          key: "anomalyFeeFlip",
+                          label: `扣点税变亏(${Math.max(0, (opReport.anomalyFeeFlipTable?.length || 1) - 1)})`,
+                        },
+                        {
+                          key: "anomalyHighSku",
+                          label: `高逆向规格(${Math.max(0, (opReport.anomalyHighRefundSkuTable?.length || 1) - 1)})`,
+                        },
+                      ].map((v) => (
+                        <button
+                          key={v.key}
+                          type="button"
+                          onClick={() => handleShowOperatingView(v.key as any)}
+                          className={`px-2.5 py-1 rounded-lg text-xs border ${
+                            opView === v.key
+                              ? "bg-rose-600 text-white border-rose-600"
+                              : "bg-white text-gray-700 border-gray-300"
+                          }`}
+                        >
+                          {v.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={handleExportAnomalies}
+                        className="px-2.5 py-1 rounded-lg text-xs bg-rose-50 text-rose-700 border border-rose-200"
+                      >
+                        导出异常Excel
+                      </button>
+                    </div>
+                  )}
+
+                  {(opView === "spuRank" || opView === "skuRank") && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs text-gray-500">排行方向：</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpRankSort("profit");
+                          handleShowOperatingView(opView, "profit");
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs border ${
+                          opRankSort === "profit"
+                            ? "bg-emerald-600 text-white border-emerald-600"
+                            : "bg-white text-gray-700 border-gray-300"
+                        }`}
+                      >
+                        最赚
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpRankSort("loss");
+                          handleShowOperatingView(opView, "loss");
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs border ${
+                          opRankSort === "loss"
+                            ? "bg-red-600 text-white border-red-600"
+                            : "bg-white text-gray-700 border-gray-300"
+                        }`}
+                      >
+                        最亏
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-white min-h-[340px]">
+                    <DataTable
+                      data={currentData}
+                      headers={
+                        currentHeaders.length
+                          ? currentHeaders
+                          : (currentData[0] || []).map(String)
+                      }
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========== SKU映射 ========== */}
       {activeTab === "mapping" && (

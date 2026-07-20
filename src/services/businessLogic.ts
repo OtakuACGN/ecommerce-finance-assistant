@@ -54,10 +54,20 @@ export function detectPlatform(fileName: string): string {
   if (name.includes("taobao") || name.includes("淘宝")) return "淘宝";
   if (name.includes("jd") || name.includes("jingdong") || name.includes("京东"))
     return "京东";
-  if (name.includes("pinduoduo") || name.includes("拼多多")) return "拼多多";
+  if (
+    name.includes("pinduoduo") ||
+    name.includes("拼多多") ||
+    name.includes("pdd-") ||
+    name.startsWith("pdd") ||
+    name.includes("pdd_mall") ||
+    name.includes("orders_export")
+  )
+    return "拼多多";
   if (name.includes("douyin") || name.includes("抖音")) return "抖音电商";
   if (name.includes("kuaishou") || name.includes("快手")) return "快手电商";
   if (name.includes("tmall") || name.includes("天猫")) return "天猫";
+  if (name.includes("小红书") || name.includes("xiaohongshu") || name.includes("xhs"))
+    return "小红书";
   return "其他";
 }
 
@@ -77,6 +87,13 @@ export function parseBill(fileData: FileData): BillRecord {
   const amtCol = findCol(headers, [
     "订单金额",
     "商品总额",
+    "商品总价",
+    "商家实收",
+    "用户实付",
+    "交易收入",
+    "收入金额",
+    "交易额",
+    "销售额",
     "amount",
     "total",
     "gmv",

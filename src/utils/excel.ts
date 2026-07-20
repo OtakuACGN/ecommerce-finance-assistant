@@ -28,6 +28,26 @@ function detectAndDecodeBuffer(buffer: ArrayBuffer): string {
   }
 }
 
+
+function findLikelyHeaderRow(rows: any[][]): number {
+  const patterns: string[][] = [
+    ["商户订单号", "发生时间", "账务类型"],
+    ["订单号", "商家实收", "商品"],
+    ["商品编码", "商品名称", "规格"],
+    ["日期", "成交花费", "交易额"],
+    ["日期", "总花费", "交易额"],
+  ]
+  const limit = Math.min(rows.length, 30)
+  for (let i = 0; i < limit; i++) {
+    const joined = (rows[i] || []).map((c) => String(c ?? "")).join("|")
+    for (const keys of patterns) {
+      const hit = keys.filter((k) => joined.includes(k)).length
+      if (hit >= 2) return i
+    }
+  }
+  return 0
+}
+
 function isCSV(filePath: string): boolean {
   return /\.(csv|CSV)$/.test(filePath)
 }
@@ -59,9 +79,11 @@ export async function processFile(filePath: string): Promise<FileData | null> {
     if (jsonData.length === 0) {
       return null
     }
-    
-    const headers = jsonData[0].map((h: any) => String(h || ''))
-    const data = jsonData
+
+    // Skip platform export preambles (e.g. PDD bill title rows)
+    const headerIdx = findLikelyHeaderRow(jsonData)
+    const data = headerIdx > 0 ? jsonData.slice(headerIdx) : jsonData
+    const headers = (data[0] || []).map((h: any) => String(h || ''))
     
     return {
       name: getBaseName(filePath),
@@ -86,7 +108,7 @@ export async function exportToExcel(data: any[][], filePath: string): Promise<vo
 export async function exportToCSV(
   data: any[][],
   filePath: string,
-  _encoding: "utf-8" = "utf-8",
+  _encoding: "utf-8" | "gbk" = "utf-8",
   delimiter: string = ","
 ): Promise<void> {
   const csv = data.map(row =>
