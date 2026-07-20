@@ -48,7 +48,7 @@ export default function StatusBar({
       {selectedFile && !isMerged && (
         <div className="flex-1 text-right truncate text-slate-400">当前: {selectedFile}</div>
       )}
-      <div className="text-slate-300">电商财务经营助手</div>
+      <div className="text-slate-300">店财通</div>
     </div>
   );
 }

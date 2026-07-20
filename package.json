@@ -1,8 +1,8 @@
 {
-  "name": "ecommerce-finance-assistant",
+  "name": "diancaitong",
   "version": "1.1.0",
   "type": "module",
-  "description": "电商财务经营助手 - 拼多多经营分析 / 数据清洗对账桌面工具",
+  "description": "店财通 - 电商经营财务助手（拼多多经营分析 / 毛利 / 对账）",
   "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "vite",
@@ -14,8 +14,10 @@
   "keywords": [
     "electron",
     "react",
-    "data-cleaner",
-    "finance"
+    "ecommerce",
+    "pinduoduo",
+    "finance",
+    "profit"
   ],
   "author": "Local",
   "license": "MIT",
@@ -42,8 +44,8 @@
     "vite-plugin-node-polyfills": "^0.26.0"
   },
   "build": {
-    "appId": "com.ecommerce.finance.assistant",
-    "productName": "电商财务经营助手",
+    "appId": "com.diancaitong.app",
+    "productName": "店财通",
     "copyright": "Copyright 2026",
     "directories": {
       "output": "release",
@@ -66,7 +68,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "Ecommerce-Finance-Assistant-Setup-1.1.0.exe",
+      "artifactName": "DianCaiTong-Setup-${version}.exe",
       "signAndEditExecutable": false,
       "signDlls": false
     },
@@ -76,15 +78,15 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "电商财务经营助手",
+      "shortcutName": "店财通",
       "installerLanguages": [
         "zh_CN"
       ],
       "language": "2052",
       "differentialPackage": false,
-      "artifactName": "Ecommerce-Finance-Assistant-Setup-1.1.0.exe"
+      "artifactName": "DianCaiTong-Setup-${version}.exe"
     },
     "asar": true
   },
-  "productName": "电商财务经营助手"
+  "productName": "店财通"
 }

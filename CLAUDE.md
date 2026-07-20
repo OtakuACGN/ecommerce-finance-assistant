@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A financial data cleaning desktop application (Electron + React + TypeScript) for processing CSV/Excel files from e-commerce platforms (淘宝, 京东, 抖音, 拼多多, 天猫, 快手). Supports deduplication, merging, format standardization, SKU mapping, payment reconciliation, bill analysis, refund loss calculation, and tiered brand rebate computation.
+店财通 (DianCaiTong) — ecommerce finance desktop app (Electron + React + TypeScript) for processing CSV/Excel files from e-commerce platforms (淘宝, 京东, 抖音, 拼多多, 天猫, 快手). Supports deduplication, merging, format standardization, SKU mapping, payment reconciliation, bill analysis, refund loss calculation, and tiered brand rebate computation.
 
 ## Commands
 

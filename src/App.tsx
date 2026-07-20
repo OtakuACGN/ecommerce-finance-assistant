@@ -997,7 +997,7 @@ function App() {
       if (result.canceled || !result.filePath) return;
       const payload = {
         version: 1,
-        app: "ecommerce-finance-assistant",
+        app: "diancaitong",
         exportedAt: new Date().toISOString(),
         costSettings: opCostSettings,
       };
@@ -1956,10 +1956,10 @@ function App() {
 
       <div className="app-header px-4 py-2.5 flex items-center gap-3 flex-wrap">
         <div className="brand-badge mr-1">
-          <div className="brand-mark">财</div>
+          <div className="brand-mark">通</div>
           <div className="leading-tight">
-            <div className="text-sm font-bold text-slate-800">电商财务经营助手</div>
-            <div className="text-[11px] text-slate-500">拼多多经营分析 · 清洗对账</div>
+            <div className="text-sm font-bold text-slate-800">店财通</div>
+            <div className="text-[11px] text-slate-500">拼多多经营分析 · 毛利对账</div>
           </div>
         </div>
 

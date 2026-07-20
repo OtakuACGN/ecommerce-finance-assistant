@@ -27,7 +27,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
-    title: '电商财务经营助手',
+    title: '店财通',
     icon: path.join(__dirname, '../public/icon.png'),
   })
 

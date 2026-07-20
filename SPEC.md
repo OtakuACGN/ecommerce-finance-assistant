@@ -1,4 +1,4 @@
-# 财务数据清洗工具 - 技术方案
+# 店财通（DianCaiTong）- 技术方案
 
 ## 技术栈
 - **Electron** + **React** + **TypeScript**
@@ -83,7 +83,7 @@
 ## 项目结构
 
 ```
-data-cleaner/
+diancaitong/
 ├── electron/
 │   ├── main.ts         # Electron 主进程（窗口、IPC）
 │   └── preload.ts      # 预加载脚本（contextBridge）
