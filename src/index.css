@@ -110,3 +110,80 @@ body {
     @apply border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition;
   }
 }
+
+
+/* ========== 表格：页面纵向滚动 + 悬浮横向条 ========== */
+.data-table-root {
+  width: 100%;
+}
+/* 只允许横向滚，禁止表格内部再开纵向条 */
+.data-table-hwrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  /* 隐藏本层横条，统一用悬浮条，避免双横条 */
+  scrollbar-width: none;
+}
+.data-table-hwrap::-webkit-scrollbar {
+  height: 0;
+  width: 0;
+  display: none;
+}
+
+/* 视口悬浮横向滚动条 */
+.data-table-floatbar {
+  pointer-events: auto;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #94a3b8;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.18);
+  padding: 6px 10px 4px;
+  backdrop-filter: blur(8px);
+}
+.data-table-floatbar-track {
+  height: 16px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  scrollbar-width: auto;
+  scrollbar-color: #1e293b #e2e8f0;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+.data-table-floatbar-track::-webkit-scrollbar {
+  height: 14px;
+}
+.data-table-floatbar-track::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 8px;
+  border: 2px solid #e2e8f0;
+}
+.data-table-floatbar-track::-webkit-scrollbar-thumb:hover {
+  background: #0f172a;
+}
+.data-table-floatbar-track::-webkit-scrollbar-track {
+  background: #e2e8f0;
+  border-radius: 8px;
+}
+.data-table-floatbar-label {
+  margin-top: 2px;
+  text-align: center;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.2;
+  user-select: none;
+}
+
+/* 经营分析页签吸顶（跟页面总滚动） */
+.op-sticky-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px 0 10px;
+  margin: 0 -4px;
+  padding-left: 4px;
+  padding-right: 4px;
+}

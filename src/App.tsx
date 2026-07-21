@@ -36,7 +36,6 @@ interface HistoryState {
 
 import {
   BillRecord,
-  RebateTier,
   RefundOrder,
   SKUMapping,
   CommissionDetail,
@@ -60,7 +59,14 @@ import {
   PddBillLine,
   PddOrder,
   ProductSku,
+  ProductMasterBuildMode,
   buildOperatingReport,
+  buildProductMasterFromOrders,
+  productMasterImportTable,
+  productMasterWorkTable,
+  productsToSkuMappings,
+  mergeProductMasters,
+  formatBossOnePagerText,
   guessShopNameFromFile,
   ingestForOperating,
   normalizeShopName,
@@ -68,6 +74,57 @@ import {
 } from "./services/pddBusiness";
 
 const OP_COST_STORAGE_KEY = "pdd-operating-cost-settings";
+const PRODUCT_META_KEY = "pdd-product-master-meta";
+const PRODUCT_IMPORT_MODE_KEY = "pdd-product-import-mode";
+
+interface ProductMasterMeta {
+  lastFileName: string;
+  lastImportedAt: string;
+  lastExportedAt: string;
+  lastMode: "replace" | "merge" | "generated";
+  pendingFillCount: number;
+  totalCount: number;
+  step: 1 | 2 | 3;
+}
+
+function loadProductMasterMeta(): ProductMasterMeta {
+  try {
+    const raw = localStorage.getItem(PRODUCT_META_KEY);
+    if (!raw) {
+      return {
+        lastFileName: "",
+        lastImportedAt: "",
+        lastExportedAt: "",
+        lastMode: "replace",
+        pendingFillCount: 0,
+        totalCount: 0,
+        step: 1,
+      };
+    }
+    const p = JSON.parse(raw);
+    return {
+      lastFileName: String(p.lastFileName || ""),
+      lastImportedAt: String(p.lastImportedAt || ""),
+      lastExportedAt: String(p.lastExportedAt || ""),
+      lastMode:
+        p.lastMode === "merge" || p.lastMode === "generated" ? p.lastMode : "replace",
+      pendingFillCount: Math.max(0, Number(p.pendingFillCount) || 0),
+      totalCount: Math.max(0, Number(p.totalCount) || 0),
+      step: p.step === 2 || p.step === 3 ? p.step : 1,
+    };
+  } catch {
+    return {
+      lastFileName: "",
+      lastImportedAt: "",
+      lastExportedAt: "",
+      lastMode: "replace",
+      pendingFillCount: 0,
+      totalCount: 0,
+      step: 1,
+    };
+  }
+}
+
 
 function cloneDefaultCostSettings(): CostSettings {
   return {
@@ -98,6 +155,15 @@ function loadOpCostSettings(): CostSettings {
         parsed.adAllocateMode === "by_gmv"
           ? parsed.adAllocateMode
           : "by_gmv",
+      matchBySpecWhenNoCode: parsed.matchBySpecWhenNoCode !== false,
+      anomalyHighRefundRate: Math.min(
+        1,
+        Math.max(0, Number.isFinite(Number(parsed.anomalyHighRefundRate)) ? Number(parsed.anomalyHighRefundRate) : 0.3),
+      ),
+      anomalyHighRefundMinShipped: Math.max(
+        1,
+        Math.round(Number(parsed.anomalyHighRefundMinShipped) || 3),
+      ),
       brandPointPct: Math.max(0, Number(parsed.brandPointPct) || 0),
       ecommerceTaxPct: Math.max(0, Number(parsed.ecommerceTaxPct) || 0),
       feeBaseMode:
@@ -140,7 +206,7 @@ type Tab =
   | "mapping"
   | "reconcile"
   | "bill"
-  | "rebate"
+  | "salesRank"
   | "monthly"
   | "operating";
 
@@ -198,10 +264,13 @@ function App() {
     | "unmatched"
     | "period"
     | "express"
+    | "expressAlert"
+    | "matchMethod"
     | "shops"
     | "spuRank"
     | "skuRank"
-    | "adAnalysis"
+    | "salesRankSku"
+    | "salesRankSpu"
     | "productReturn"
     | "anomalies"
     | "anomalyNeg"
@@ -217,6 +286,21 @@ function App() {
     loadOpCostSettings(),
   );
   const [opSettingsLoaded, setOpSettingsLoaded] = useState(false);
+  const [productImportMode, setProductImportMode] = useState<"replace" | "merge">(
+    () => {
+      try {
+        return localStorage.getItem(PRODUCT_IMPORT_MODE_KEY) === "merge"
+          ? "merge"
+          : "replace";
+      } catch {
+        return "replace";
+      }
+    },
+  );
+  const [productMasterMeta, setProductMasterMeta] = useState<ProductMasterMeta>(
+    () => loadProductMasterMeta(),
+  );
+
 
   useEffect(() => {
     setOpSettingsLoaded(true);
@@ -231,18 +315,24 @@ function App() {
     }
   }, [opCostSettings, opSettingsLoaded]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRODUCT_META_KEY, JSON.stringify(productMasterMeta));
+    } catch {
+      /* ignore */
+    }
+  }, [productMasterMeta]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRODUCT_IMPORT_MODE_KEY, productImportMode);
+    } catch {
+      /* ignore */
+    }
+  }, [productImportMode]);
+
+
   // 返利相关
-  const [rebateTiers] = useState<RebateTier[]>([
-    { min: 0, max: 50, rate: 2, label: "0-50万" },
-    { min: 50, max: 100, rate: 3, label: "50-100万" },
-    { min: 100, max: 200, rate: 4, label: "100-200万" },
-    { min: 200, max: 500, rate: 5, label: "200-500万" },
-    { min: 500, max: 0, rate: 6, label: "500万以上" },
-  ]);
-  const [customTiers, setCustomTiers] = useState<RebateTier[]>([]);
-  const [rebateResult, setRebateResult] = useState<any[][] | null>(null);
-  const [rebateBrand, setRebateBrand] = useState("");
-  const [rebateGMV, setRebateGMV] = useState(0);
   const [runtimeNotice, setRuntimeNotice] = useState<string | null>(
     desktopReady
       ? null
@@ -257,9 +347,17 @@ function App() {
     title: string;
     message: string;
     onConfirm: () => void;
+    onCancel?: () => void;
     confirmLabel?: string;
+    cancelLabel?: string;
     confirmClassName?: string;
     disabled?: boolean;
+    actions?: {
+      label: string;
+      onClick: () => void;
+      className?: string;
+      primary?: boolean;
+    }[];
   } | null>(null);
 
   const [showExportPanel, setShowExportPanel] = useState(false);
@@ -865,8 +963,75 @@ function App() {
         products: 0,
         ads: 0,
         unknown: 0,
+        skippedOrders: 0,
         names: [] as string[],
       };
+      // 本地工作副本，避免循环内 setState 竞态 + 支持冲突选择
+      let localOrders = opOrders.slice();
+      let localProducts = opProducts.slice();
+      let localBill = opBillLines.slice();
+      let localAds = opAds.slice();
+
+      const askOrderConflict = (payload: {
+        shop: string;
+        fileName: string;
+        existing: number;
+        incoming: number;
+        overlap: number;
+      }) =>
+        new Promise<"merge" | "replace_shop" | "append_new" | "skip">((resolve) => {
+          setConfirmDialog({
+            title: `店铺「${payload.shop}」已有订单`,
+            message: `文件：${payload.fileName}\n已有 ${payload.existing} 单，本次 ${payload.incoming} 单，订单号重叠 ${payload.overlap} 单。\n请选择导入策略：`,
+            onConfirm: () => {
+              setConfirmDialog(null);
+              resolve("merge");
+            },
+            onCancel: () => resolve("skip"),
+            cancelLabel: "取消/跳过",
+            confirmLabel: "合并(同单覆盖)",
+            actions: [
+              {
+                label: "合并(同单覆盖)",
+                primary: true,
+                className:
+                  "px-3 py-2 text-white rounded-lg text-sm bg-blue-600 hover:bg-blue-700",
+                onClick: () => {
+                  setConfirmDialog(null);
+                  resolve("merge");
+                },
+              },
+              {
+                label: "替换本店订单",
+                className:
+                  "px-3 py-2 text-white rounded-lg text-sm bg-rose-600 hover:bg-rose-700",
+                onClick: () => {
+                  setConfirmDialog(null);
+                  resolve("replace_shop");
+                },
+              },
+              {
+                label: "只追加新单",
+                className:
+                  "px-3 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50",
+                onClick: () => {
+                  setConfirmDialog(null);
+                  resolve("append_new");
+                },
+              },
+              {
+                label: "跳过此文件",
+                className:
+                  "px-3 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50",
+                onClick: () => {
+                  setConfirmDialog(null);
+                  resolve("skip");
+                },
+              },
+            ],
+          } as any);
+        });
+
       try {
         for (const filePath of filePaths) {
           const fileData = await processFile(filePath);
@@ -886,11 +1051,41 @@ function App() {
               ...o,
               shopName: shop,
             }));
-            setOpOrders((prev) => {
-              const map = new Map(prev.map((o) => [o.orderId, o]));
+            const existingShop = localOrders.filter(
+              (o) => normalizeShopName(o.shopName) === shop,
+            );
+            let mode: "merge" | "replace_shop" | "append_new" | "skip" = "merge";
+            if (existingShop.length > 0 && stamped.length > 0) {
+              const existIds = new Set(existingShop.map((o) => o.orderId));
+              const overlap = stamped.filter((o) => existIds.has(o.orderId)).length;
+              mode = await askOrderConflict({
+                shop,
+                fileName: fileData.name,
+                existing: existingShop.length,
+                incoming: stamped.length,
+                overlap,
+              });
+            }
+            if (mode === "skip") {
+              stats.skippedOrders += stamped.length;
+              continue;
+            }
+            if (mode === "replace_shop") {
+              localOrders = [
+                ...localOrders.filter((o) => normalizeShopName(o.shopName) !== shop),
+                ...stamped,
+              ];
+            } else if (mode === "append_new") {
+              const ids = new Set(localOrders.map((o) => o.orderId));
+              localOrders = [
+                ...localOrders,
+                ...stamped.filter((o) => !ids.has(o.orderId)),
+              ];
+            } else {
+              const map = new Map(localOrders.map((o) => [o.orderId, o]));
               for (const o of stamped) map.set(o.orderId, o);
-              return Array.from(map.values());
-            });
+              localOrders = Array.from(map.values());
+            }
             pushOpSource(kind, fileData.name, stamped.length, shop);
             setFiles((prev) => [...prev, ingested.normalized]);
             stats.orders += stamped.length;
@@ -899,44 +1094,66 @@ function App() {
               ...l,
               shopName: shop,
             }));
-            setOpBillLines((prev) => [...prev, ...stamped]);
+            localBill = [...localBill, ...stamped];
             if (ingested.billRecord) {
               setBillRecords((prev) => [...prev, ingested.billRecord!]);
             }
             pushOpSource(kind, fileData.name, stamped.length, shop);
             stats.bill += stamped.length;
           } else if (kind === "product_master") {
-            setOpProducts(ingested.products);
-            if (ingested.skuMappings) setSkuMappings(ingested.skuMappings);
-            pushOpSource(kind, fileData.name, ingested.products.length, shop);
-            stats.products += ingested.products.length;
+            const incoming = ingested.products;
+            if (productImportMode === "merge" && localProducts.length > 0) {
+              localProducts = mergeProductMasters(localProducts, incoming);
+            } else {
+              localProducts = incoming;
+            }
+            setSkuMappings(productsToSkuMappings(localProducts));
+            pushOpSource(kind, fileData.name, localProducts.length, shop);
+            const pending = localProducts.filter(
+              (p) => (p.costPrice || 0) + (p.packCost || 0) <= 0,
+            ).length;
+            setProductMasterMeta({
+              lastFileName: fileData.name,
+              lastImportedAt: new Date().toLocaleString("zh-CN"),
+              lastExportedAt: productMasterMeta.lastExportedAt,
+              lastMode: productImportMode === "merge" ? "merge" : "replace",
+              pendingFillCount: pending,
+              totalCount: localProducts.length,
+              step: 3,
+            });
+            stats.products += incoming.length;
           } else if (kind === "ad_daily") {
             const stamped = ingested.adDays.map((d) => ({
               ...d,
               shopName: shop,
             }));
-            setOpAds((prev) => {
-              const others = prev.filter(
-                (d) => normalizeShopName(d.shopName) !== shop,
-              );
-              return [...others, ...stamped];
-            });
+            localAds = [
+              ...localAds.filter((d) => normalizeShopName(d.shopName) !== shop),
+              ...stamped,
+            ];
             pushOpSource(kind, fileData.name, stamped.length, shop);
             stats.ads += stamped.length;
           } else {
             stats.unknown += 1;
             showToast(
-              `无法识别：${fileData.name}（需含订单/账务/商品资料/推广特征）`,
+              `无法识别：${fileData.name}（需含订单/账务/商品资料/推广分天）`,
               "warning",
             );
           }
         }
+        setOpOrders(localOrders);
+        setOpProducts(localProducts);
+        setOpBillLines(localBill);
+        setOpAds(localAds);
         setOpReport(null);
         const parts = [
           stats.orders ? `订单${stats.orders}单` : "",
           stats.bill ? `账务${stats.bill}行` : "",
-          stats.products ? `商品${stats.products}规格` : "",
+          stats.products
+            ? `商品${stats.products}规格(${productImportMode === "merge" ? "合并" : "替换"})`
+            : "",
           stats.ads ? `推广${stats.ads}天` : "",
+          stats.skippedOrders ? `跳过订单文件` : "",
           stats.unknown ? `未识别${stats.unknown}个` : "",
         ].filter(Boolean);
         showToast(
@@ -949,7 +1166,18 @@ function App() {
         reportError("经营分析导入", error);
       }
     },
-    [opShopLabel, pushOpSource, reportError, showToast],
+    [
+      opOrders,
+      opProducts,
+      opBillLines,
+      opAds,
+      opShopLabel,
+      productImportMode,
+      productMasterMeta.lastExportedAt,
+      pushOpSource,
+      reportError,
+      showToast,
+    ],
   );
 
   const handleOperatingImport = useCallback(
@@ -1078,6 +1306,15 @@ function App() {
           raw.adAllocateMode === "by_gmv"
             ? raw.adAllocateMode
             : "by_gmv",
+        matchBySpecWhenNoCode: raw.matchBySpecWhenNoCode !== false,
+        anomalyHighRefundRate: Math.min(
+          1,
+          Math.max(0, Number.isFinite(Number(raw.anomalyHighRefundRate)) ? Number(raw.anomalyHighRefundRate) : 0.3),
+        ),
+        anomalyHighRefundMinShipped: Math.max(
+          1,
+          Math.round(Number(raw.anomalyHighRefundMinShipped) || 3),
+        ),
       });
       setOpReport(null);
       showToast("经营参数已导入，请重新生成报表", "success");
@@ -1136,7 +1373,7 @@ function App() {
       opProducts.length === 0 &&
       opAds.length === 0
     ) {
-      showToast('请先导入至少一种数据（订单/账务/商品/推广）', 'error');
+      showToast("请先导入至少一种数据（订单/账务/商品/推广）", "error");
       return;
     }
     const report = buildOperatingReport(
@@ -1147,7 +1384,7 @@ function App() {
       opCostSettings,
     );
     setOpReport(report);
-    setOpView('summary');
+    setOpView("summary");
     setCurrentData(report.summaryTable);
     setCurrentHeaders(report.summaryTable[0] || []);
     setIsMerged(false);
@@ -1217,10 +1454,13 @@ function App() {
           : unmatchedFallback,
         period: opReport.periodTable,
         express: opReport.expressTable,
+        expressAlert: opReport.expressAlertTable || [],
+        matchMethod: opReport.matchMethodTable || [],
         shops: opReport.shopTable,
         spuRank: applyRankSort(opReport.spuTable, rankSort),
         skuRank: applyRankSort(opReport.skuTable, rankSort),
-        adAnalysis: opReport.adAnalysisTable || [],
+        salesRankSku: opReport.salesRankSkuTable || [],
+        salesRankSpu: opReport.salesRankSpuTable || [],
         productReturn: opReport.productReturnTable || [],
         lossDiagnosis: opReport.lossDiagnosisTable || [],
         bossOnePager: opReport.bossOnePagerTable || [],
@@ -1282,6 +1522,162 @@ function App() {
       showToast("复制失败，请手动从「未匹配成本」表导出", "error");
     }
   }, [opReport, showToast]);
+
+
+  const handleCopyBossOnePager = useCallback(async () => {
+    if (!opReport?.bossOnePagerTable?.length) {
+      showToast("请先生成经营报表", "error");
+      return;
+    }
+    try {
+      const text = formatBossOnePagerText(opReport.bossOnePagerTable);
+      await navigator.clipboard.writeText(text);
+      showToast("老板一页纸已复制为文本，可粘贴到微信/备忘录", "success");
+    } catch {
+      showToast("复制失败，请改用导出 Excel 中的「老板一页纸」表", "error");
+    }
+  }, [opReport, showToast]);
+
+  const handleCopyBossOnePagerTsv = useCallback(async () => {
+    if (!opReport?.bossOnePagerTable?.length) {
+      showToast("请先生成经营报表", "error");
+      return;
+    }
+    try {
+      const tsv = opReport.bossOnePagerTable
+        .map((row) => row.map((c) => String(c ?? "")).join("\t"))
+        .join("\n");
+      await navigator.clipboard.writeText(tsv);
+      showToast("老板一页纸已复制为表格(TSV)，可粘贴到 Excel", "success");
+    } catch {
+      showToast("复制失败", "error");
+    }
+  }, [opReport, showToast]);
+
+    const handleExportProductMaster = useCallback(
+    async (mode: ProductMasterBuildMode = "all") => {
+      if (opOrders.length === 0) {
+        showToast("请先导入订单，才能从订单生成商品资料", "error");
+        return;
+      }
+      try {
+        const rows = buildProductMasterFromOrders(opOrders, opProducts, mode);
+        if (rows.length === 0) {
+          showToast(
+            mode === "missing_cost"
+              ? "没有待补成本的规格（已全部匹配或订单无规格）"
+              : "未能从订单提取规格",
+            "warning",
+          );
+          return;
+        }
+        const tag = mode === "missing_cost" ? "待补" : "全部";
+        const defaultName = `商品资料_订单去重_${tag}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        const result = await saveDataFile(defaultName);
+        if (result.canceled || !result.filePath) return;
+        const XLSX = await import("xlsx");
+        const wb = XLSX.utils.book_new();
+        const importSheet = productMasterImportTable(rows);
+        const workSheet = productMasterWorkTable(rows);
+        const guide: any[][] = [
+          ["说明"],
+          ["1. 本文件「商品资料」表头与平台导出一致，填好参考成本价/包材/重量后，可直接再导入店财通。"],
+          ["2. 规格编码优先取订单「商家编码-规格」；为空时用商品编码或规格名兜底。"],
+          ["3. 「对照明细」含订单数/销量/均价，方便估算成本，导入时不会用到此表。"],
+          ["4. 若已导入过商品资料，已有成本会自动带上；待填行成本为空。"],
+          ["生成规格数", rows.length],
+          ["待填成本数", rows.filter((r) => !r.hasCost).length],
+          ["已有成本数", rows.filter((r) => r.hasCost).length],
+          ["来源订单数", opOrders.length],
+        ];
+        for (const [name, data] of [
+          ["商品资料", importSheet],
+          ["对照明细", workSheet],
+          ["使用说明", guide],
+        ] as [string, any[][]][]) {
+          const ws = XLSX.utils.aoa_to_sheet(data);
+          XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+        }
+        const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+        await writeLocalFile(result.filePath, out.buffer);
+        const pending = rows.filter((r) => !r.hasCost).length;
+        setProductMasterMeta((m) => ({
+          ...m,
+          lastExportedAt: new Date().toLocaleString("zh-CN"),
+          lastFileName: result.filePath?.split(/[/\\]/).pop() || m.lastFileName,
+          pendingFillCount: pending,
+          totalCount: rows.length,
+          step: 2,
+          lastMode: "generated",
+        }));
+        showToast(
+          `已导出商品资料（${tag}）${rows.length} 个规格，其中待填 ${pending}。请填成本后重新导入（步骤③）`,
+          "success",
+        );
+      } catch (error) {
+        reportError("导出商品资料", error);
+      }
+    },
+    [opOrders, opProducts, reportError, showToast],
+  );
+
+  const handleLoadProductMasterFromOrders = useCallback(
+    (mode: ProductMasterBuildMode = "all") => {
+      if (opOrders.length === 0) {
+        showToast("请先导入订单", "error");
+        return;
+      }
+      const rows = buildProductMasterFromOrders(opOrders, opProducts, mode);
+      if (rows.length === 0) {
+        showToast("未能生成规格", "warning");
+        return;
+      }
+      const generatedKeys = new Set(
+        rows.map((r) => r.skuCode || r.specName || r.productCode),
+      );
+      const leftovers = opProducts.filter((p) => {
+        const k = p.skuCode || p.specName || p.productCode;
+        return k && !generatedKeys.has(k);
+      });
+      const merged: ProductSku[] = [
+        ...rows.map((r) => ({
+          productCode: r.productCode,
+          productName: r.productName,
+          skuCode: r.skuCode,
+          specName: r.specName,
+          salePrice: r.salePrice,
+          costPrice: r.costPrice,
+          packCost: r.packCost,
+          weightKg: r.weightKg,
+          stock: r.stock,
+        })),
+        ...leftovers,
+      ];
+      setOpProducts(merged);
+      setSkuMappings(productsToSkuMappings(merged));
+      pushOpSource(
+        "product_master",
+        mode === "missing_cost" ? "订单生成-待补规格" : "订单生成-全部规格",
+        merged.length,
+      );
+      setOpReport(null);
+      const missing = rows.filter((r) => !r.hasCost).length;
+      setProductMasterMeta({
+        lastFileName: "订单生成",
+        lastImportedAt: new Date().toLocaleString("zh-CN"),
+        lastExportedAt: productMasterMeta.lastExportedAt,
+        lastMode: "generated",
+        pendingFillCount: missing,
+        totalCount: merged.length,
+        step: missing > 0 ? 2 : 3,
+      });
+      showToast(
+        `已载入 ${merged.length} 个规格（新生成 ${rows.length}，待填成本 ${missing}）。填成本请导出 Excel 后回填再导入。`,
+        "success",
+      );
+    },
+    [opOrders, opProducts, productMasterMeta.lastExportedAt, pushOpSource, showToast],
+  );
 
   const updateExpressRule = useCallback(
     (index: number, patch: Partial<ExpressShipRule>) => {
@@ -1433,11 +1829,13 @@ function App() {
         ["账务类型", opReport.billTypeTable],
         ["账务按单", opReport.billWideTable],
         ["推广分天", opReport.adTable],
+        ["推广分析", opReport.adAnalysisTable || []],
         ["商品成本", opReport.productMapTable],
         ["店铺对比", opReport.shopTable],
         ["SPU毛利排行", opReport.spuTable],
         ["规格毛利排行", opReport.skuTable],
-        ["推广分析", opReport.adAnalysisTable],
+        ["匹配方式", opReport.matchMethodTable || []],
+        ["快递未匹配", opReport.expressAlertTable || []],
         ["产品退货退款率", opReport.productReturnTable],
         ["亏损诊断", opReport.lossDiagnosisTable],
         ["老板一页纸", opReport.bossOnePagerTable],
@@ -1799,75 +2197,6 @@ function App() {
   }, [refundLossData, reportError]);
 
   // ========== P1: 品牌阶梯返利计算 ==========
-  const calculateRebate = useCallback((gmvWan: number, tiers: RebateTier[]) => {
-    let remaining = gmvWan;
-    let totalRebate = 0;
-    const details: any[][] = [];
-    for (const tier of tiers) {
-      if (remaining <= 0) break;
-      const tierMax = tier.max > 0 ? tier.max : remaining + 1;
-      const applicable = Math.min(remaining, tierMax - tier.min);
-      if (applicable > 0) {
-        const rebate = (applicable * tier.rate) / 100;
-        totalRebate += rebate;
-        details.push([
-          tier.label,
-          `${tier.min}-${tier.max === 0 ? "∞" : tier.max}万`,
-          `${tier.rate}%`,
-          `${applicable.toFixed(2)}万`,
-          `${rebate.toFixed(4)}万`,
-        ]);
-        remaining -= applicable;
-      }
-    }
-    return { totalRebate, details };
-  }, []);
-
-  const handleGenerateRebate = useCallback(() => {
-    const gmvYuan = rebateGMV;
-    if (gmvYuan <= 0) return;
-    const gmvWan = gmvYuan / 10000;
-    const tiers = customTiers.length > 0 ? customTiers : rebateTiers;
-    const { totalRebate, details } = calculateRebate(gmvWan, tiers);
-    const headers = [
-      "阶梯区间",
-      "区间范围(万)",
-      "返利比例",
-      "适用GMV(万)",
-      "返利金额(万)",
-    ];
-    const data = [
-      headers,
-      ...details,
-      ["", "", "", "返利合计(万)", totalRebate.toFixed(4)],
-      ["", "", "", "折合人民币", `¥${(totalRebate * 10000).toFixed(2)}`],
-    ];
-    setRebateResult(data);
-    setCurrentData(data);
-    setCurrentHeaders(headers);
-    saveHistory(data, headers);
-  }, [
-    rebateGMV,
-    rebateBrand,
-    customTiers,
-    rebateTiers,
-    calculateRebate,
-    saveHistory,
-  ]);
-
-  const handleExportRebate = useCallback(async () => {
-    if (!rebateResult || rebateResult.length === 0) return;
-    try {
-      const result = await saveDataFile(
-        `品牌返利计算_${rebateBrand || "通用"}_${new Date().toISOString().slice(0, 7)}.xlsx`,
-      );
-      if (!result.canceled && result.filePath)
-        await exportToExcel(rebateResult, result.filePath);
-    } catch (error) {
-      reportError("导出品牌返利表", error);
-    }
-  }, [rebateResult, rebateBrand, reportError]);
-
   const handleExportWithPanel = useCallback(() => {
     if (currentData.length === 0) return;
     setShowExportPanel(true);
@@ -1915,10 +2244,6 @@ function App() {
     setRefundFile(null);
     setRefundRecords([]);
     setRefundLossData([]);
-    setRebateResult(null);
-    setRebateGMV(0);
-    setRebateBrand("");
-    setCustomTiers([]);
   }, []);
 
   const filteredData = useMemo(() => {
@@ -1971,7 +2296,7 @@ function App() {
           { key: "mapping", label: "SKU映射" },
           { key: "reconcile", label: "收款对账" },
           { key: "bill", label: "账单对账" },
-          { key: "rebate", label: "品牌返利" },
+          { key: "salesRank", label: "销售排行" },
           { key: "monthly", label: "月度汇总" },
         ].map((tab) => (
           <button
@@ -2026,20 +2351,25 @@ function App() {
 
       {/* ========== 经营分析（拼多多四表） ========== */}
       {activeTab === "operating" && (
-        <div className="flex-1 overflow-auto p-6 bg-transparent">
-          <div className="max-w-[1680px] mx-auto space-y-4 w-full">
-            <div className="panel-card p-6">
-              <div className="mb-4">
-                <h2 className="text-lg font-bold text-slate-800 tracking-tight">
-                  拼多多经营分析
-                </h2>
-                <p className="text-sm text-slate-500 mt-1">
-                  适配订单/账务/商品/推广四表。支持多店铺对比、SPU/规格毛利排行、待补SKU带品名规格导出。
-                  导入前填写店铺/账号名，可分别导入多家后统一对比。
-                </p>
+        <div className="flex-1 min-h-0 overflow-auto p-4 md:p-6 bg-transparent">
+          <div className="max-w-[1680px] mx-auto w-full space-y-4">
+            <div className="panel-card p-4 md:p-6">
+              <div className="mb-3 flex items-start justify-between gap-3 flex-shrink-0">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800 tracking-tight">
+                    拼多多经营分析
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    适配订单/账务/商品/推广四表。支持多店铺对比、SPU/规格毛利排行、待补SKU带品名规格导出。
+                  </p>
+                </div>
               </div>
 
-              <div className="mb-4 flex flex-wrap items-end gap-3">
+              {/* 有报表时收起导入/参数区，避免出现「页面滚 + 表格滚」双纵向条 */}
+              <div
+                className="contents"
+              >
+              <div className="mb-4 flex flex-wrap items-end gap-3 p-1">
                 <label className="flex flex-col gap-1 text-sm min-w-[220px]">
                   <span className="text-xs text-gray-500">
                     当前导入店铺/账号名（多店对比用）
@@ -2125,18 +2455,128 @@ function App() {
                     已导入 <strong>{opBillLines.length}</strong> 行流水
                   </div>
                 </button>
-                <button
-                  onClick={() => handleOperatingImport("product_master")}
-                  className="border border-violet-200/80 bg-gradient-to-br from-violet-50 to-purple-50 hover:shadow-md hover:-translate-y-0.5 transition rounded-2xl p-4 text-left"
-                >
-                  <div className="font-medium text-violet-800">3. 商品资料</div>
-                  <div className="text-xs text-violet-600 mt-1">
-                    商品资料*.xlsx（成本）
+                                <div className="border border-violet-200/80 bg-gradient-to-br from-violet-50 to-purple-50 rounded-xl p-3 space-y-2">
+                  <button
+                    onClick={() => handleOperatingImport("product_master")}
+                    className="w-full text-left hover:opacity-90 transition"
+                  >
+                    <div className="font-medium text-violet-800">3. 商品资料</div>
+                    <div className="text-xs text-violet-600 mt-1">
+                      商品资料*.xlsx（成本）· 或从订单生成
+                    </div>
+                    <div className="text-sm mt-2 text-gray-700">
+                      已导入 <strong>{opProducts.length}</strong> 个规格
+                    </div>
+                  </button>
+                  <div className="flex flex-wrap gap-1.5 pt-1 border-t border-violet-100">
+                    <button
+                      type="button"
+                      onClick={() => handleExportProductMaster("all")}
+                      disabled={opOrders.length === 0}
+                      className="text-[11px] px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"
+                      title="从订单去重导出标准商品资料模板"
+                    >
+                      导出全部规格
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExportProductMaster("missing_cost")}
+                      disabled={opOrders.length === 0}
+                      className="text-[11px] px-2 py-1 rounded bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40"
+                      title="仅导出尚未匹配成本的规格"
+                    >
+                      导出待补规格
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLoadProductMasterFromOrders("all")}
+                      disabled={opOrders.length === 0}
+                      className="text-[11px] px-2 py-1 rounded border border-violet-300 text-violet-800 bg-white hover:bg-violet-50 disabled:opacity-40"
+                      title="把订单去重结果载入为当前商品资料（成本可后补）"
+                    >
+                      生成并载入
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          matchBySpecWhenNoCode: !s.matchBySpecWhenNoCode,
+                        }));
+                        setOpReport(null);
+                      }}
+                      className={`text-[11px] px-2 py-1 rounded border ${
+                        opCostSettings.matchBySpecWhenNoCode !== false
+                          ? "bg-emerald-600 text-white border-emerald-700"
+                          : "bg-white text-slate-600 border-slate-300"
+                      }`}
+                      title="开启后：订单无商家编码时，用商品规格/品名+规格匹配商品资料（生成的无编码资料也能对上）"
+                    >
+                      {opCostSettings.matchBySpecWhenNoCode !== false
+                        ? "✓ 无编码按规格匹配"
+                        : "无编码按规格匹配"}
+                    </button>
                   </div>
-                  <div className="text-sm mt-2 text-gray-700">
-                    已导入 <strong>{opProducts.length}</strong> 个规格
+                  <div className="text-[10px] text-violet-700/80 leading-snug">
+                    无商家编码的订单：{opCostSettings.matchBySpecWhenNoCode !== false
+                      ? "按「商品规格 / 品名+规格」匹配成本（推荐）"
+                      : "不走规格匹配，无编码订单易未匹配"}
                   </div>
-                </button>
+                  <div className="rounded-lg bg-white/80 border border-violet-100 p-2 space-y-1.5">
+                    <div className="text-[11px] font-medium text-violet-900">商品资料三步</div>
+                    <div className="flex flex-wrap gap-1 text-[10px]">
+                      {[
+                        { n: 1 as const, t: "①导出/生成" },
+                        { n: 2 as const, t: "②填成本" },
+                        { n: 3 as const, t: "③再导入" },
+                      ].map((s) => (
+                        <span
+                          key={s.n}
+                          className={`px-1.5 py-0.5 rounded ${
+                            productMasterMeta.step === s.n
+                              ? "bg-violet-600 text-white"
+                              : productMasterMeta.step > s.n
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {s.t}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setProductImportMode((m) =>
+                            m === "merge" ? "replace" : "merge",
+                          )
+                        }
+                        className={`text-[10px] px-2 py-0.5 rounded border ${
+                          productImportMode === "merge"
+                            ? "bg-violet-600 text-white border-violet-700"
+                            : "bg-white text-slate-600 border-slate-300"
+                        }`}
+                      >
+                        {productImportMode === "merge" ? "✓ 合并导入" : "替换导入"}
+                      </button>
+                      {productMasterMeta.pendingFillCount > 0 && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-medium">
+                          还有 {productMasterMeta.pendingFillCount} 个待填成本
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-500 leading-snug">
+                      {productMasterMeta.lastFileName
+                        ? `最近：${productMasterMeta.lastFileName} · ${
+                            productMasterMeta.lastImportedAt ||
+                            productMasterMeta.lastExportedAt ||
+                            "-"
+                          } · ${productMasterMeta.totalCount}规格`
+                        : "尚未导入/导出商品资料"}
+                    </div>
+                  </div>
+                </div>
                 <button
                   onClick={() => handleOperatingImport("ad_daily")}
                   className="border border-orange-200/80 bg-gradient-to-br from-orange-50 to-amber-50 hover:shadow-md hover:-translate-y-0.5 transition rounded-2xl p-4 text-left"
@@ -2305,6 +2745,45 @@ function App() {
                       <option value="by_order_count">按订单数均摊</option>
                       <option value="none">不摊到单(仅汇总扣)</option>
                     </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">高逆向率阈值%</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round((opCostSettings.anomalyHighRefundRate ?? 0.3) * 100)}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          anomalyHighRefundRate: Math.min(
+                            1,
+                            Math.max(0, (Number(e.target.value) || 0) / 100),
+                          ),
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1 bg-white"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">高逆向最少发货单</span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={opCostSettings.anomalyHighRefundMinShipped ?? 3}
+                      onChange={(e) =>
+                        setOpCostSettings((s) => ({
+                          ...s,
+                          anomalyHighRefundMinShipped: Math.max(
+                            1,
+                            Math.round(Number(e.target.value) || 3),
+                          ),
+                        }))
+                      }
+                      className="border rounded-lg px-2 py-1 bg-white"
+                    />
                   </label>
                   <label className="flex flex-col gap-1">
                     <span className="text-xs text-gray-500">品牌扣点(%)</span>
@@ -2699,6 +3178,34 @@ function App() {
                   复制待补SKU
                 </button>
                 <button
+                  onClick={handleCopyBossOnePager}
+                  disabled={!opReport}
+                  className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-900 disabled:opacity-40"
+                >
+                  复制老板一页纸
+                </button>
+                <button
+                  onClick={handleCopyBossOnePagerTsv}
+                  disabled={!opReport}
+                  className="px-4 py-2 rounded-lg border border-slate-400 bg-white text-slate-800 text-sm hover:bg-slate-50 disabled:opacity-40"
+                >
+                  复制一页纸表格
+                </button>
+                <button
+                  onClick={() => handleExportProductMaster("all")}
+                  disabled={opOrders.length === 0}
+                  className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-700 disabled:opacity-40"
+                >
+                  生成商品资料
+                </button>
+                <button
+                  onClick={() => handleExportProductMaster("missing_cost")}
+                  disabled={opOrders.length === 0}
+                  className="px-4 py-2 rounded-lg bg-violet-500/90 text-white text-sm hover:bg-violet-600 disabled:opacity-40"
+                >
+                  待补商品资料
+                </button>
+                <button
                   type="button"
                   onClick={handleExportCostSettings}
                   className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50"
@@ -2736,8 +3243,11 @@ function App() {
                 </div>
               )}
 
+                            </div>
+
               {opReport && (
-                <>
+                <div className="mt-2">
+                  <div className="contents">
                   <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 mb-4">
                     <div className="bg-slate-50 rounded-lg p-3">
                       <div className="text-xs text-gray-500">商家实收</div>
@@ -3028,6 +3538,45 @@ function App() {
                     </div>
                   </div>
 
+                  {/* 匹配方式可解释 */}
+                  {opReport.matchMethodTable && opReport.matchMethodTable.length > 1 && (
+                    <div className="mb-4 rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="text-sm font-medium text-sky-900">成本匹配方式</div>
+                        <button
+                          type="button"
+                          className="text-xs text-sky-700 underline"
+                          onClick={() => handleShowOperatingView("matchMethod")}
+                        >
+                          查看明细
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {opReport.matchMethodTable.slice(1).map((row, idx) => {
+                          const name = String(row[0] ?? "");
+                          const count = row[1];
+                          const share = String(row[2] ?? "");
+                          const bad = name === "未匹配";
+                          return (
+                            <span
+                              key={idx}
+                              className={`text-xs px-2 py-1 rounded-lg border ${
+                                bad
+                                  ? "bg-amber-100 border-amber-200 text-amber-900"
+                                  : "bg-white border-sky-100 text-slate-700"
+                              }`}
+                            >
+                              <strong>{name}</strong> {count}单 ({share})
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-2">
+                        订单毛利表含「匹配方式」列；无编码命中会显示「商品规格(无编码)」等。
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 text-white rounded-xl p-4 mb-4 shadow-sm">
                     <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                       <div>
@@ -3219,7 +3768,9 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="flex flex-nowrap gap-2 mb-3 overflow-x-auto pb-1">
+                  </div>
+                  <div className="op-sticky-chrome flex-shrink-0">
+                  <div className="flex flex-nowrap gap-2 mb-2 overflow-x-auto pb-1 flex-shrink-0">
                     {[
                       { key: "summary", label: "汇总" },
                       { key: "bossOnePager", label: "老板一页纸" },
@@ -3230,9 +3781,13 @@ function App() {
                       { key: "shops", label: "店铺对比" },
                       { key: "spuRank", label: "SPU毛利排行" },
                       { key: "skuRank", label: "规格毛利排行" },
-                      { key: "adAnalysis", label: "推广分析" },
+                      { key: "salesRankSku", label: "规格销售榜" },
+                      { key: "salesRankSpu", label: "编码销售榜" },
+                      { key: "ads", label: "推广" },
                       { key: "productReturn", label: "产品退货退款率" },
                       { key: "express", label: "分快递运费" },
+                      { key: "expressAlert", label: "快递未匹配" },
+                      { key: "matchMethod", label: "匹配方式" },
                       { key: "orders", label: "订单毛利" },
                       {
                         key: "shipLoss",
@@ -3240,7 +3795,6 @@ function App() {
                       },
                       { key: "billTypes", label: "账务类型" },
                       { key: "billWide", label: "账务按单" },
-                      { key: "ads", label: "推广日报" },
                       { key: "products", label: "商品成本" },
                       {
                         key: "unmatched",
@@ -3344,8 +3898,141 @@ function App() {
                       </button>
                     </div>
                   )}
+                  </div>{/* op-sticky-chrome */}
 
-                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-white min-h-[340px]">
+
+
+                  {opView === "bossOnePager" && opReport && (
+                    <div className="mb-3 rounded-xl border border-slate-800/10 bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                        <div>
+                          <div className="text-base font-bold tracking-wide">店财通 · 老板一页纸</div>
+                          <div className="text-xs text-slate-300 mt-0.5">
+                            {new Date().toLocaleString("zh-CN")} · 截图或复制留档
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={handleCopyBossOnePager}
+                            className="text-xs px-2.5 py-1 rounded bg-white text-slate-900 hover:bg-slate-100"
+                          >
+                            复制文本
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCopyBossOnePagerTsv}
+                            className="text-xs px-2.5 py-1 rounded border border-white/40 hover:bg-white/10"
+                          >
+                            复制表格
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                        {(opReport.bossOnePagerTable || [])
+                          .slice(1)
+                          .map((row, idx) => (
+                            <div
+                              key={idx}
+                              className="rounded-lg bg-white/10 px-2.5 py-2 border border-white/10"
+                            >
+                              <div className="text-[11px] text-slate-300 leading-snug">
+                                {String(row[0] ?? "")}
+                              </div>
+                              <div className="font-semibold text-white mt-0.5 break-words">
+                                {String(row[1] ?? "")}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {opView === "ads" && opReport && (
+                    <div className="mb-3 rounded-xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-bold text-orange-900">推广中心</div>
+                          <div className="text-[11px] text-orange-800/90 mt-0.5">
+                            仅统计推广分天日报；账务里的广告费已排除，避免重复扣减。
+                          </div>
+                        </div>
+                        <div className="text-xs text-orange-900 bg-white/70 border border-orange-100 rounded-lg px-2.5 py-1">
+                          扣广告毛利 ¥
+                          {opReport.summary.estimatedProfitAfterAd.toFixed(0)}
+                          {" · "}
+                          分摊 ¥{opReport.summary.adAllocatedTotal.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+                        <div className="rounded-lg bg-white border border-orange-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">广告花费</div>
+                          <div className="text-lg font-bold text-orange-700">
+                            ¥{opReport.summary.adSpend.toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg bg-white border border-orange-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">交易额</div>
+                          <div className="text-lg font-bold text-slate-800">
+                            ¥{opReport.summary.adGmv.toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg bg-white border border-orange-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">净交易额</div>
+                          <div className="text-lg font-bold text-slate-800">
+                            ¥{Number(opReport.summary.adNetGmv || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg bg-white border border-orange-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">结算交易额</div>
+                          <div className="text-lg font-bold text-slate-800">
+                            ¥{Number(opReport.summary.adSettledGmv || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg bg-white border border-emerald-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">实际投产比</div>
+                          <div className="text-lg font-bold text-emerald-700">
+                            {opReport.summary.adRoi.toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">交易额/花费</div>
+                        </div>
+                        <div className="rounded-lg bg-white border border-sky-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">净实际投产比</div>
+                          <div className="text-lg font-bold text-sky-700">
+                            {Number(opReport.summary.adNetRoi || 0).toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">净交易额/花费</div>
+                        </div>
+                        <div className="rounded-lg bg-white border border-violet-100 p-2.5">
+                          <div className="text-[11px] text-slate-500">结算投产比</div>
+                          <div className="text-lg font-bold text-violet-700">
+                            {Number(opReport.summary.adSettledRoi || 0).toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">结算交易额/花费</div>
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-slate-600">
+                        下表为分天明细（含三项投产比）。表格底部有常驻横向滚动条，前两列已冻结。
+                      </div>
+                    </div>
+                  )}
+
+                  {opView === "express" &&
+                    opReport?.expressAlertTable &&
+                    opReport.expressAlertTable.length > 1 && (
+                      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        有 {opReport.expressAlertTable.length - 1} 家快递未命中运费规则（走默认首重续重）。
+                        <button
+                          type="button"
+                          className="ml-2 underline"
+                          onClick={() => handleShowOperatingView("expressAlert")}
+                        >
+                          查看未匹配快递
+                        </button>
+                      </div>
+                    )}
+
+                                    <div className="border border-slate-200 rounded-xl bg-white overflow-x-clip">
                     <DataTable
                       data={currentData}
                       headers={
@@ -3353,9 +4040,11 @@ function App() {
                           ? currentHeaders
                           : (currentData[0] || []).map(String)
                       }
+                      stickyCols={2}
+                      maxHeightClass="max-h-full"
                     />
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -3691,7 +4380,7 @@ function App() {
                 {accrualData.length > 0 ? (
                   <div className="overflow-x-auto max-h-80">
                     <table className="w-full text-sm">
-                      <thead className="bg-purple-50 sticky top-0">
+                      <thead className="bg-purple-50">
                         <tr>
                           {accrualData[0].map((h: string, i: number) => (
                             <th
@@ -3826,7 +4515,7 @@ function App() {
                     {refundLossData.length > 0 && (
                       <div className="mt-3 overflow-x-auto max-h-60 border rounded">
                         <table className="w-full text-xs">
-                          <thead className="bg-red-50 sticky top-0">
+                          <thead className="bg-red-50">
                             <tr>
                               {refundLossData[0].map((h: string, i: number) => (
                                 <th
@@ -3865,153 +4554,129 @@ function App() {
         </div>
       )}
 
-      {/* ========== 品牌返利 ========== */}
-      {activeTab === "rebate" && (
-        <div className="flex-1 overflow-auto p-6">
-          <div className="space-y-6 max-w-4xl mx-auto">
-            <div className="bg-white rounded-xl shadow p-6">
-              <h2 className="font-semibold text-gray-800 mb-1">
-                💰 品牌阶梯返利计算
-              </h2>
-              <p className="text-sm text-gray-500 mb-4">
-                设置品牌月GMV，自动按阶梯计算返利金额
-              </p>
-
-              <div className="grid grid-cols-2 gap-4 mb-6">
+      {/* ========== 销售排行（按编码） ========== */}
+      {activeTab === "salesRank" && (
+        <div className="flex-1 overflow-auto p-4 md:p-6">
+          <div className="max-w-[1400px] mx-auto space-y-4">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    品牌名称
-                  </label>
-                  <input
-                    type="text"
-                    value={rebateBrand}
-                    onChange={(e) => setRebateBrand(e.target.value)}
-                    placeholder="如：海信、美的、TCL"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                  />
+                  <h2 className="font-semibold text-gray-800 text-lg">
+                    按编码销售排行总榜
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    以规格编码 / 商品编码汇总销量与实收，分析什么规格更好卖（需先在「经营分析」生成报表）
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    月GMV（元）
-                  </label>
-                  <input
-                    type="number"
-                    value={rebateGMV || ""}
-                    onChange={(e) =>
-                      setRebateGMV(parseFloat(e.target.value) || 0)
-                    }
-                    placeholder="输入月GMV，如：3560000"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                  />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!opReport}
+                    onClick={() => {
+                      if (!opReport) return;
+                      setActiveTab("operating");
+                      handleShowOperatingView("salesRankSku");
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-sm bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"
+                  >
+                    规格销售榜
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!opReport}
+                    onClick={() => {
+                      if (!opReport) return;
+                      setActiveTab("operating");
+                      handleShowOperatingView("salesRankSpu");
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+                  >
+                    编码/SPU榜
+                  </button>
                 </div>
               </div>
 
-              {/* 阶梯规则 */}
-              <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                  返利阶梯规则
-                </h3>
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-blue-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left text-xs text-blue-700 font-medium">
-                          阶梯
-                        </th>
-                        <th className="px-4 py-2 text-left text-xs text-blue-700 font-medium">
-                          GMV范围(万)
-                        </th>
-                        <th className="px-4 py-2 text-left text-xs text-blue-700 font-medium">
-                          返利比例
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(customTiers.length > 0 ? customTiers : rebateTiers).map(
-                        (tier, i) => (
-                          <tr key={i} className="border-t">
-                            <td className="px-4 py-2 text-gray-700">
-                              {tier.label}
-                            </td>
-                            <td className="px-4 py-2 text-gray-500">
-                              {tier.min}万 ~{" "}
-                              {tier.max === 0 ? "无上限" : `${tier.max}万`}
-                            </td>
-                            <td className="px-4 py-2">
-                              <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-sm font-bold">
-                                {tier.rate}%
-                              </span>
-                            </td>
-                          </tr>
-                        ),
-                      )}
-                    </tbody>
-                  </table>
+              {!opReport ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-sm px-4 py-3">
+                  请先切换到「经营分析」导入订单（及商品资料）并点击「生成经营报表」，再查看销售排行。
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="rounded-lg bg-slate-50 border p-3">
+                      <div className="text-xs text-slate-500">订单数</div>
+                      <div className="text-xl font-bold">{opReport.summary.orderCount}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 border p-3">
+                      <div className="text-xs text-slate-500">商品总价 GMV</div>
+                      <div className="text-xl font-bold">
+                        ¥{opReport.summary.goodsTotal.toFixed(0)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 border p-3">
+                      <div className="text-xs text-slate-500">规格数(销售榜)</div>
+                      <div className="text-xl font-bold">
+                        {Math.max(0, (opReport.salesRankSkuTable?.length || 1) - 1)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 border p-3">
+                      <div className="text-xs text-slate-500">商品编码数</div>
+                      <div className="text-xl font-bold">
+                        {Math.max(0, (opReport.salesRankSpuTable?.length || 1) - 1)}
+                      </div>
+                    </div>
+                  </div>
 
-              <button
-                onClick={handleGenerateRebate}
-                disabled={rebateGMV <= 0}
-                className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-medium disabled:opacity-40 w-full mb-4"
-              >
-                🧮 计算返利
-              </button>
-
-              {/* 返利预览 */}
-              {rebateResult && rebateResult.length > 0 && (
-                <div className="border rounded-lg overflow-hidden">
-                  <div className="bg-green-50 px-4 py-2 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-green-800">
-                      返利计算结果
-                    </span>
+                  <div className="flex gap-2 mb-2">
                     <button
-                      onClick={handleExportRebate}
-                      className="px-3 py-1 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700"
+                      type="button"
+                      onClick={() => {
+                        const t = opReport.salesRankSkuTable || [];
+                        setCurrentData(t);
+                        setCurrentHeaders(t[0] || []);
+                        setIsMerged(false);
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs border bg-violet-50 border-violet-200 text-violet-900"
                     >
-                      📥 导出Excel
+                      显示规格编码榜
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const t = opReport.salesRankSpuTable || [];
+                        setCurrentData(t);
+                        setCurrentHeaders(t[0] || []);
+                        setIsMerged(false);
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs border bg-indigo-50 border-indigo-200 text-indigo-900"
+                    >
+                      显示商品编码榜
                     </button>
                   </div>
-                  <div className="overflow-x-auto max-h-60">
-                    <table className="w-full text-sm">
-                      <thead className="bg-green-50 sticky top-0">
-                        <tr>
-                          {rebateResult[0].map((h: string, i: number) => (
-                            <th
-                              key={i}
-                              className="px-3 py-2 text-left text-xs text-green-700"
-                            >
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rebateResult.slice(1).map((row: any[], i: number) => (
-                          <tr
-                            key={i}
-                            className={`border-t ${i === rebateResult.length - 2 || i === rebateResult.length - 1 ? "bg-green-50 font-bold" : ""}`}
-                          >
-                            {row.map((cell: any, j: number) => (
-                              <td
-                                key={j}
-                                className={`px-3 py-2 text-xs ${j >= 3 ? "text-right" : ""}`}
-                              >
-                                {cell}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
 
-              <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
-                💡 提示：返利金额按阶梯累进计算，例如 GMV 120万 = 50万×2% +
-                50万×3% + 20万×4%
-              </div>
+                  <div className="border border-slate-200 rounded-xl bg-white overflow-x-clip">
+                    <DataTable
+                      data={
+                        currentData.length > 0 &&
+                        String(currentData[0]?.[0] || "").includes("排名")
+                          ? currentData
+                          : opReport.salesRankSkuTable || []
+                      }
+                      headers={
+                        currentData.length > 0 &&
+                        String(currentData[0]?.[0] || "").includes("排名")
+                          ? currentHeaders
+                          : (opReport.salesRankSkuTable || [])[0] || []
+                      }
+                      stickyCols={3}
+                      maxHeightClass="max-h-full"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    默认按销量（件数）降序；可点列头排序。横向滚动时前几列已冻结，方便对照编码/品名。
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -4148,7 +4813,15 @@ function App() {
         confirmClassName={confirmDialog?.confirmClassName}
         disabled={confirmDialog?.disabled}
         onConfirm={confirmDialog?.onConfirm || (() => {})}
-        onCancel={() => setConfirmDialog(null)}
+        cancelLabel={confirmDialog?.cancelLabel}
+        onCancel={() => {
+          try {
+            confirmDialog?.onCancel?.();
+          } finally {
+            setConfirmDialog(null);
+          }
+        }}
+        actions={confirmDialog?.actions}
       />
       <ExportPanel
         open={showExportPanel}
