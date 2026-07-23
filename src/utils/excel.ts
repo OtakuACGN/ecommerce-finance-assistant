@@ -97,12 +97,83 @@ export async function processFile(filePath: string): Promise<FileData | null> {
   }
 }
 
+/**
+ * xlsx 的 type:'array' 在不同环境下可能是 number[] 或 Uint8Array。
+ * 直接取 .buffer 会得到 undefined 或整段 SharedBuffer，导致导出空文件。
+ */
+export function xlsxOutputToArrayBuffer(
+  output: ArrayBuffer | Uint8Array | number[],
+): ArrayBuffer {
+  if (output instanceof ArrayBuffer) {
+    return output
+  }
+  const u8 =
+    output instanceof Uint8Array
+      ? output
+      : Uint8Array.from(output as number[])
+  // copy to a pure ArrayBuffer (avoid SharedArrayBuffer typing issues)
+  const copy = new Uint8Array(u8.byteLength)
+  copy.set(u8)
+  return copy.buffer
+}
+
+/** 将二维表写入 xlsx（单表） */
 export async function exportToExcel(data: any[][], filePath: string): Promise<void> {
+  if (!data || data.length === 0) {
+    throw new Error("导出数据为空")
+  }
   const worksheet = XLSX.utils.aoa_to_sheet(data)
   const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, '数据')
-  const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
-  await writeLocalFile(filePath, output.buffer)
+  XLSX.utils.book_append_sheet(workbook, worksheet, "数据")
+  const output = XLSX.write(workbook, { bookType: "xlsx", type: "array" })
+  const ab = xlsxOutputToArrayBuffer(output as any)
+  if (!ab || ab.byteLength < 32) {
+    throw new Error("生成 Excel 失败（内容为空）")
+  }
+  await writeLocalFile(filePath, ab)
+}
+
+export type WorkbookSheet = {
+  name: string
+  data: any[][]
+  /** 0-based data row indexes (excluding header) to mark as pending */
+  highlightRowIndexes?: number[]
+}
+
+/** 多工作表导出 */
+export async function exportWorkbook(
+  sheets: Array<WorkbookSheet>,
+  filePath: string,
+): Promise<void> {
+  if (!sheets.length) throw new Error("没有可导出的工作表")
+  const workbook = XLSX.utils.book_new()
+  for (const s of sheets) {
+    const rows = s.data || []
+    if (!rows.length) {
+      // 至少写一个空表头占位，避免空白表
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet([["(空表)"]]),
+        (s.name || "Sheet").slice(0, 31),
+      )
+      continue
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    // 给表头列宽一个合理默认，WPS/Excel 打开更像模板
+    const colCount = Math.max(...rows.map((r) => (r ? r.length : 0)), 1)
+    ws["!cols"] = Array.from({ length: colCount }, (_, i) => ({
+      wch: i < 4 ? 16 : i < 12 ? 12 : 10,
+    }))
+    // community xlsx: keep business keys intact; pending rows marked by cost-status column + sort.
+    void (s.highlightRowIndexes || [])
+    XLSX.utils.book_append_sheet(workbook, ws, (s.name || "Sheet").slice(0, 31))
+  }
+  const output = XLSX.write(workbook, { bookType: "xlsx", type: "array" })
+  const ab = xlsxOutputToArrayBuffer(output as any)
+  if (!ab || ab.byteLength < 32) {
+    throw new Error("生成 Excel 失败（内容为空）")
+  }
+  await writeLocalFile(filePath, ab)
 }
 
 export async function exportToCSV(
@@ -123,6 +194,8 @@ export async function exportToCSV(
 
   // Always use UTF-8 with BOM for Excel compatibility
   const bom = "\ufeff";
-  const buffer = new TextEncoder().encode(bom + csv);
-  await writeLocalFile(filePath, buffer.buffer);
+  const encoded = new TextEncoder().encode(bom + csv);
+  const copy = new Uint8Array(encoded.byteLength);
+  copy.set(encoded);
+  await writeLocalFile(filePath, copy.buffer);
 }

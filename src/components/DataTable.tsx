@@ -26,6 +26,14 @@ export default function DataTable({
   const [sortColumn, setSortColumn] = useState<number | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem("dct_table_page_size") || 100);
+      return [50, 100, 200, 500, 1000].includes(n) ? n : 100;
+    } catch {
+      return 200;
+    }
+  });
   const [tableWidth, setTableWidth] = useState(0);
   const [needHScroll, setNeedHScroll] = useState(false);
   const [floatBar, setFloatBar] = useState<{
@@ -35,7 +43,7 @@ export default function DataTable({
     visible: boolean;
   }>({ left: 0, width: 0, bottom: 0, visible: false });
 
-  const rowsPerPage = 100;
+  // 大表分页窗口：1000+ 行只渲染当前页，避免 DOM 爆炸
   const rootRef = useRef<HTMLDivElement>(null);
   const hWrapRef = useRef<HTMLDivElement>(null);
   const floatBarRef = useRef<HTMLDivElement>(null);
@@ -48,7 +56,15 @@ export default function DataTable({
     setSortDirection(null);
     if (hWrapRef.current) hWrapRef.current.scrollLeft = 0;
     if (floatBarRef.current) floatBarRef.current.scrollLeft = 0;
-  }, [data, headers]);
+  }, [data, headers, rowsPerPage]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("dct_table_page_size", String(rowsPerPage));
+    } catch {
+      /* ignore */
+    }
+  }, [rowsPerPage]);
 
   const displayHeaders =
     headers && headers.length > 0
@@ -126,11 +142,44 @@ export default function DataTable({
     return rows;
   }, [bodyRows, sortColumn, sortDirection]);
 
+  const isNumericLike = (raw: unknown): boolean => {
+    if (raw === null || raw === undefined || raw === "") return false;
+    const s = String(raw).trim();
+    if (!s) return false;
+    if (/^[-+]?\d{1,3}(,\d{3})*(\.\d+)?%?$/.test(s)) return true;
+    if (/^[-+]?\d+(\.\d+)?%?$/.test(s)) return true;
+    if (/^[¥￥$]?\s*[-+]?\d{1,3}(,\d{3})*(\.\d+)?$/.test(s)) return true;
+    if (/^[¥￥$]?\s*[-+]?\d+(\.\d+)?$/.test(s)) return true;
+    const n = Number(s.replace(/[,%￥¥$\s]/g, ""));
+    return Number.isFinite(n) && /\d/.test(s) && s.length <= 18;
+  };
+
+  const isNegativeValue = (raw: unknown): boolean => {
+    if (!isNumericLike(raw)) return false;
+    const n = Number(String(raw).replace(/[,%￥¥$\s]/g, ""));
+    return Number.isFinite(n) && n < 0;
+  };
+
+  const numericCols = useMemo(() => {
+    const sample = bodyRows.slice(0, 40);
+    return displayHeaders.map((_, colIdx) => {
+      let hits = 0;
+      let total = 0;
+      for (const row of sample) {
+        const v = row?.[colIdx];
+        if (v === null || v === undefined || String(v).trim() === "") continue;
+        total += 1;
+        if (isNumericLike(v)) hits += 1;
+      }
+      return total > 0 && hits / total >= 0.6;
+    });
+  }, [bodyRows, displayHeaders]);
+
   const totalPages = Math.max(1, Math.ceil(sortedData.length / rowsPerPage));
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * rowsPerPage;
     return sortedData.slice(start, start + rowsPerPage);
-  }, [sortedData, currentPage]);
+  }, [sortedData, currentPage, rowsPerPage]);
 
   const measureTable = useCallback(() => {
     const el = tableRef.current;
@@ -233,10 +282,20 @@ export default function DataTable({
 
   if (!data || data.length === 0) {
     return (
-      <div className="flex items-center justify-center bg-white min-h-[200px]">
-        <div className="text-center text-slate-400">
-          <p className="text-lg">暂无数据</p>
-          <p className="text-sm mt-2">请导入文件或生成报表</p>
+      <div className="flex items-center justify-center bg-gradient-to-b from-white to-slate-50 min-h-[240px] rounded-xl border border-dashed border-slate-200">
+        <div className="text-center px-6 py-8 max-w-sm">
+          <div className="mx-auto mb-3 w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl font-bold">
+            表
+          </div>
+          <p className="text-base font-semibold text-slate-700">暂无数据</p>
+          <p className="text-sm text-slate-500 mt-2 leading-relaxed">
+            导入订单 / 账单 / 商品资料后，在「经营分析」生成报表，结果会显示在这里。
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2 text-[11px] text-slate-400">
+            <span className="px-2 py-1 rounded-full bg-white border">① 导入文件</span>
+            <span className="px-2 py-1 rounded-full bg-white border">② 生成报表</span>
+            <span className="px-2 py-1 rounded-full bg-white border">③ 查看明细</span>
+          </div>
         </div>
       </div>
     );
@@ -271,9 +330,9 @@ export default function DataTable({
                   <th
                     key={index}
                     onClick={() => handleSort(index)}
-                    className={`px-3 py-2.5 text-left text-xs font-semibold text-slate-600 cursor-pointer hover:bg-blue-50 border-b border-slate-200 bg-slate-50 ${
-                      frozen ? "z-40 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.12)]" : "z-30"
-                    }`}
+                    className={`px-3 py-2.5 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-blue-50 border-b border-slate-200 bg-slate-50 ${
+                      numericCols[index] ? "text-right" : "text-left"
+                    } ${frozen ? "z-40 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.12)]" : "z-30"}`}
                     style={
                       frozen
                         ? {
@@ -300,13 +359,36 @@ export default function DataTable({
             </tr>
           </thead>
           <tbody>
-            {paginatedData.map((row, rowIndex) => (
+            {paginatedData.map((row, rowIndex) => {
+              const pendingCost = (row || []).some((c) => {
+                const s = String(c ?? "");
+                return s === "待填成本" || s === "待填" || s.includes("【待填】");
+              });
+              const partialRefund = (row || []).some(
+                (c) => String(c ?? "") === "部分退" || String(c ?? "").startsWith("部分退："),
+              );
+              const rowTint = pendingCost
+                ? "bg-amber-50/90"
+                : partialRefund
+                  ? "bg-orange-50/70"
+                  : rowIndex % 2 === 1
+                    ? "bg-slate-50/70"
+                    : "bg-white";
+              return (
               <tr
                 key={rowIndex}
-                className="hover:bg-slate-50/90 border-b border-slate-100 group"
+                className={`border-b border-slate-100 group transition-colors ${rowTint} hover:bg-blue-50/50`}
+                style={{ contentVisibility: "auto", containIntrinsicSize: "0 42px" }}
+                title={
+                  pendingCost
+                    ? "待填成本"
+                    : partialRefund
+                      ? "部分退款订单"
+                      : undefined
+                }
               >
                 <td
-                  className="px-2 py-2 text-xs text-slate-400 whitespace-nowrap align-top sticky left-0 bg-white group-hover:bg-slate-50 z-20"
+                  className={`px-2 py-2 text-xs text-slate-400 whitespace-nowrap align-top sticky left-0 z-20 group-hover:bg-blue-50/80 ${rowTint}`}
                   style={{ minWidth: COL_NUM_W, width: COL_NUM_W }}
                 >
                   {(currentPage - 1) * rowsPerPage + rowIndex + 1}
@@ -316,12 +398,21 @@ export default function DataTable({
                   const text =
                     cell === null || cell === undefined ? "" : String(cell);
                   const frozen = cellIndex < freezeN;
+                  const numeric = numericCols[cellIndex];
+                  const negative = isNegativeValue(cell);
+                  const zebraBg = rowTint;
                   return (
                     <td
                       key={cellIndex}
-                      className={`px-3 py-2 text-sm text-slate-700 align-top ${
+                      className={`px-3 py-2 text-sm align-top ${
+                        numeric ? "text-right tabular-nums" : "text-left"
+                      } ${
+                        negative
+                          ? "text-rose-600 font-medium"
+                          : "text-slate-700"
+                      } ${
                         frozen
-                          ? "bg-white group-hover:bg-slate-50 z-20 font-medium shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]"
+                          ? `${zebraBg} group-hover:bg-blue-50/80 z-20 font-medium shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]`
                           : ""
                       }`}
                       style={
@@ -343,13 +434,24 @@ export default function DataTable({
                             : "whitespace-pre-wrap break-words min-w-[5rem] max-w-[36rem]"
                         }
                       >
-                        {text}
+                        {text === "否" && displayHeaders[cellIndex]?.includes("匹配") ? (
+                          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-amber-100 text-amber-900">
+                            否
+                          </span>
+                        ) : text === "待填成本" || text === "待填" ? (
+                          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-amber-200/80 text-amber-950">
+                            {text}
+                          </span>
+                        ) : (
+                          text
+                        )}
                       </div>
                     </td>
                   );
                 })}
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>
@@ -361,10 +463,27 @@ export default function DataTable({
             <span className="text-slate-400"> · {displayHeaders.length} 列</span>
           )}
           <span className="text-slate-400 text-xs ml-2">
-            页面上下滚 · 底栏悬浮左右滑 · 前 {freezeN} 列左右冻结
+            分页窗口 {rowsPerPage} 行 · 页面上下滚 · 底栏左右滑 · 前 {freezeN} 列冻结
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            每页
+            <select
+              value={rowsPerPage}
+              onChange={(e) => {
+                setRowsPerPage(Number(e.target.value) || 200);
+                setCurrentPage(1);
+              }}
+              className="border rounded-lg px-1.5 py-1 bg-white text-xs"
+            >
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+              <option value={500}>500</option>
+              <option value={1000}>1000</option>
+            </select>
+          </label>
           <button
             type="button"
             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}

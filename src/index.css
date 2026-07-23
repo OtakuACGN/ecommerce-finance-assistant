@@ -187,3 +187,27 @@ body {
   padding-left: 4px;
   padding-right: 4px;
 }
+
+
+/* ========== UI polish ========== */
+.stat-card {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.tab-pill {
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.tab-pill:active {
+  transform: scale(0.98);
+}
+.op-sticky-chrome {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+.panel-card {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.btn-primary {
+  transition: filter 0.15s ease, transform 0.12s ease;
+}
+.btn-primary:active {
+  transform: scale(0.98);
+}

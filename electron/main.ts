@@ -140,15 +140,28 @@ ipcMain.handle('file:read', async (_, filePath: string) => {
   }
 })
 
-ipcMain.handle('file:write', async (_, filePath: string, data: string | ArrayBuffer) => {
+ipcMain.handle('file:write', async (_, filePath: string, data: string | ArrayBuffer | Uint8Array | number[]) => {
   try {
+    if (data == null) {
+      return { success: false, error: '写入数据为空' }
+    }
     if (typeof data === 'string') {
       fs.writeFileSync(filePath, data, 'utf8')
-    } else {
-      const buf = Buffer.from(new Uint8Array(data as ArrayBuffer))
-      fs.writeFileSync(filePath, buf)
+      return { success: true, bytes: Buffer.byteLength(data, 'utf8') }
     }
-    return { success: true }
+    let buf: Buffer
+    if (Array.isArray(data)) {
+      buf = Buffer.from(data as number[])
+    } else if (data instanceof Uint8Array) {
+      buf = Buffer.from(data)
+    } else {
+      buf = Buffer.from(new Uint8Array(data as ArrayBuffer))
+    }
+    if (!buf.length) {
+      return { success: false, error: '写入数据长度为 0（可能是导出序列化失败）' }
+    }
+    fs.writeFileSync(filePath, buf)
+    return { success: true, bytes: buf.length }
   } catch (error: any) {
     return { success: false, error: error.message }
   }

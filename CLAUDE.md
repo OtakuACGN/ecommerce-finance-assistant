@@ -47,9 +47,9 @@ All state lives in `App.tsx` via React `useState`. No external state library. Ke
 
 1. File selected via `electronAPI.openFile()` → `processFile()` in `src/utils/excel.ts` parses via `xlsx` library
 2. `FileData` interface: `{ name, path, headers, data: any[][] }`
-3. Data stored in `files[]` state; displayed in `DataTable` component
-4. Transformations (deduplicate, clean empty, trim, standardize date, fill empty, select columns) operate on `currentData` and update both `currentData` and the corresponding entry in `files[]`
-5. Export via `exportToExcel()` / `exportToCSV()` which calls `electronAPI.writeFile()`
+3. Operating analysis state lives in `opOrders` / `opProducts` / `opAds` / `opReport`
+4. Report tables are shown via `currentData` + `DataTable`
+5. Export uses `exportToExcel` / `exportWorkbook` + `electronAPI.writeFile()`
 
 ### Platform Detection
 
@@ -75,10 +75,10 @@ src/
   utils/excel.ts # processFile, exportToExcel, exportToCSV
   components/
     DataTable.tsx
-    FileSidebar.tsx
-    MonthlySummary.tsx
+        MonthlySummary.tsx
     StatusBar.tsx
-    Toolbar.tsx
+    StatCard.tsx
+OpViewNav.tsx
 ```
 
 ## Key Implementation Notes
