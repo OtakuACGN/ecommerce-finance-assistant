@@ -113,7 +113,7 @@ export default function OperatingDashboard({
                     ¥{(opReport.summary.confirmedRevenue ?? opReport.summary.merchantReceived).toFixed(2)}
                   </div>
                   <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">
-                    部分退只扣退款额，保留部分仍计入
+                    部分退：收入只扣退款额；商品成本仍按全额
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-3">

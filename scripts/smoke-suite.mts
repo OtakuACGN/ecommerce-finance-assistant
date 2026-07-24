@@ -206,6 +206,8 @@ const pdd = await load("src/services/pddBusiness.ts");
       const f1 = repP.orderProfits.find((r) => r.orderId === "F1");
       ok("money.partial_rev", !!p1 && Math.abs(p1.revenue - 54) < 0.01, p1 ? String(p1.revenue) : "missing");
       ok("money.partial_kind", !!p1 && p1.refundKind === "partial", p1 ? String(p1.refundKind) : "missing");
+      ok("money.partial_full_cost", !!p1 && Math.abs(p1.costTotal - 20) < 0.01, p1 ? String(p1.costTotal) : "missing");
+      ok("money.partial_no_return_loss", !!p1 && Math.abs(p1.returnLoss || 0) < 0.01, p1 ? String(p1.returnLoss) : "missing");
       ok("money.unship_full_rev0", !!f1 && Math.abs(f1.revenue) < 0.01 && f1.refundKind === "full", f1 ? `${f1.refundKind}/${f1.revenue}` : "missing");
       ok("money.summary_profit_recon", Math.abs(repP.summary.estimatedProfitBeforeAd - repP.orderProfits.reduce((s, r) => s + r.estimatedProfit, 0)) < 0.02, String(repP.summary.estimatedProfitBeforeAd));
     }

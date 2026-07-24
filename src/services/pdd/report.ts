@@ -192,23 +192,16 @@ export function buildOperatingReport(
       else if (shipped && !refunded) chargeProductCost = true;
       costTotal = chargeProductCost ? fullProductCost : 0;
     } else if (refundKind === "partial") {
-      // 部分退：收入只扣退款额（revenue=保留）；成本按保留比例计，退回部分可计损耗
-      const keptCost = fullProductCost * residualRatio;
-      const refundedCostBase = fullProductCost * refundRatio;
-      if (settings.countProductCostOnRefundedShip) {
+      // 部分退：收入只扣退款额；商品已出库/成交，商品成本按全额计（不按退款比例打折）
+      // 不再对退款占比另计退货损耗，避免与全额成本重复扣减
+      if (shipped || completed || postShipRefund) {
         costTotal = fullProductCost;
-        returnLoss = 0;
       } else {
-        costTotal = keptCost;
-        returnLoss =
-          postShipRefund || shipped
-            ? refundedCostBase * Math.max(0, Math.min(1, settings.returnRestockRate || 0))
-            : 0;
+        // 极端：未发货却部分退（少见），无出库则不计商品成本
+        costTotal = 0;
       }
-      repackCost =
-        (postShipRefund || shipped) && refundRatio > 0.01
-          ? Math.max(0, settings.returnRepackCost || 0)
-          : 0;
+      returnLoss = 0;
+      repackCost = 0;
     } else if (refundKind === "unknown") {
       // 待账务：收入按残留保留，成本按保留占比计（默认 residualRatio=1），
       // 绝不当全额退核销（避免「留收入 + 退货损耗」双向失真）
