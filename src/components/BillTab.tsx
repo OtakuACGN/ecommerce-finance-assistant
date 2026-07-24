@@ -12,6 +12,13 @@ export interface BillTabProps {
   desktopReady: boolean;
   showBillDetail: BillRecord | null;
   setShowBillDetail: (b: BillRecord | null) => void;
+  /** 经营分析账务流水（与订单账期对齐） */
+  opBillLinesCount?: number;
+  opBillPeriod?: string;
+  opOrdersCount?: number;
+  opOrdersPeriod?: string;
+  onSyncFromOperating?: () => void;
+  onGoOperating?: () => void;
   onImportBill: () => void;
   onImportCommission: () => void;
   onGenerateAccrual: () => void;
@@ -40,6 +47,12 @@ export default function BillTab(props: BillTabProps) {
     onExportRefundLoss,
     onRemoveBill,
     onError,
+    opBillLinesCount = 0,
+    opBillPeriod,
+    opOrdersCount = 0,
+    opOrdersPeriod,
+    onSyncFromOperating,
+    onGoOperating,
   } = props;
 
   const platformColor: Record<string, string> = {
@@ -68,20 +81,66 @@ export default function BillTab(props: BillTabProps) {
         <div className="space-y-6 max-w-5xl mx-auto">
           {/* 账单列表 */}
           <div className="bg-white rounded-xl shadow">
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
               <div>
                 <h2 className="font-semibold text-gray-800">📄 平台账单</h2>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  导入各平台月末账单，自动解析佣金/扣点/补贴
+                  优先对接经营分析账务；也可另导平台月末账单做权责/退款还原
                 </p>
               </div>
-              <button
-                onClick={handleImportBill}
-                disabled={!desktopReady}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-40"
-              >
-                + 导入账单
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {onSyncFromOperating && (
+                  <button
+                    type="button"
+                    onClick={onSyncFromOperating}
+                    disabled={opBillLinesCount === 0}
+                    className="px-3 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm disabled:opacity-40"
+                    title="把经营分析已导入的账务明细生成账单记录"
+                  >
+                    从经营分析同步
+                  </button>
+                )}
+                <button
+                  onClick={handleImportBill}
+                  disabled={!desktopReady}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-40"
+                >
+                  + 导入账单
+                </button>
+              </div>
+            </div>
+            <div className="px-4 py-3 bg-slate-50/80 border-b border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2">
+                <div className="text-violet-600">经营分析账务</div>
+                <div className="font-semibold text-violet-950 text-sm mt-0.5">
+                  {opBillLinesCount} 行流水
+                </div>
+                <div className="text-violet-800/80 mt-0.5">{opBillPeriod || "未导入账务"}</div>
+              </div>
+              <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                <div className="text-blue-600">经营分析订单</div>
+                <div className="font-semibold text-blue-950 text-sm mt-0.5">{opOrdersCount} 单</div>
+                <div className="text-blue-800/80 mt-0.5">{opOrdersPeriod || "未导入订单"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-slate-500">账期对齐提示</div>
+                <div className="text-slate-700 mt-0.5 leading-relaxed">
+                  {opBillLinesCount === 0 ? (
+                    <>
+                      请先在经营分析导入账务明细，或在此导入账单。
+                      {onGoOperating && (
+                        <button type="button" className="ml-1 text-blue-600 underline" onClick={onGoOperating}>
+                          去经营分析
+                        </button>
+                      )}
+                    </>
+                  ) : opOrdersPeriod && opBillPeriod && opOrdersPeriod !== opBillPeriod ? (
+                    <>订单账期与账务账期可能不完全一致，权责计提时请留意。</>
+                  ) : (
+                    <>账务与订单均来自经营分析主数据，可同步为账单后做权责/退款分析。</>
+                  )}
+                </div>
+              </div>
             </div>
             {billRecords.length === 0 ? (
               <div className="p-12 text-center text-gray-400">

@@ -116,22 +116,40 @@ body {
 .data-table-root {
   width: 100%;
 }
-/* 只允许横向滚，禁止表格内部再开纵向条 */
+/* 横向滚交给悬浮滑块；虚拟模式下本层同时承担纵向滚 */
 .data-table-hwrap {
   width: 100%;
   overflow-x: auto;
   overflow-y: visible;
   overscroll-behavior-x: contain;
-  /* 隐藏本层横条，统一用悬浮条，避免双横条 */
   scrollbar-width: none;
 }
+.data-table-hwrap--virtual {
+  overflow-y: auto;
+  max-height: min(70vh, 640px);
+  /* Firefox：只保留纵向细条 */
+  scrollbar-width: thin;
+}
 .data-table-hwrap::-webkit-scrollbar {
-  height: 0;
   width: 0;
-  display: none;
+  height: 0;
+}
+.data-table-hwrap--virtual::-webkit-scrollbar {
+  width: 10px;
+  height: 0;
+}
+.data-table-hwrap--virtual::-webkit-scrollbar:vertical {
+  width: 10px;
+}
+.data-table-hwrap--virtual::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 8px;
+}
+.data-table-hwrap--virtual::-webkit-scrollbar-track {
+  background: #f1f5f9;
 }
 
-/* 视口悬浮横向滚动条 */
+/* 视口悬浮横向滚动条（真实可拖滑块） */
 .data-table-floatbar {
   pointer-events: auto;
   border-radius: 12px;
@@ -142,28 +160,34 @@ body {
   backdrop-filter: blur(8px);
 }
 .data-table-floatbar-track {
-  height: 16px;
-  overflow-x: scroll;
-  overflow-y: hidden;
-  scrollbar-width: auto;
-  scrollbar-color: #1e293b #e2e8f0;
-  border-radius: 8px;
+  position: relative;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 9px;
   background: #e2e8f0;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
-.data-table-floatbar-track::-webkit-scrollbar {
+.data-table-floatbar-thumb {
+  position: absolute;
+  top: 2px;
+  left: 0;
   height: 14px;
-}
-.data-table-floatbar-track::-webkit-scrollbar-thumb {
-  background: #334155;
+  min-width: 28px;
   border-radius: 8px;
-  border: 2px solid #e2e8f0;
+  background: #334155;
+  border: 2px solid #cbd5e1;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  pointer-events: none;
 }
-.data-table-floatbar-track::-webkit-scrollbar-thumb:hover {
+.data-table-floatbar-track:hover .data-table-floatbar-thumb,
+.data-table-floatbar-track:focus .data-table-floatbar-thumb {
   background: #0f172a;
 }
-.data-table-floatbar-track::-webkit-scrollbar-track {
-  background: #e2e8f0;
-  border-radius: 8px;
+.data-table-floatbar-track:focus {
+  outline: 2px solid #94a3b8;
+  outline-offset: 1px;
 }
 .data-table-floatbar-label {
   margin-top: 2px;
@@ -172,8 +196,8 @@ body {
   color: #64748b;
   line-height: 1.2;
   user-select: none;
+  pointer-events: none;
 }
-
 /* 经营分析页签吸顶（跟页面总滚动） */
 .op-sticky-chrome {
   position: sticky;

@@ -108,7 +108,11 @@ export function useMappingReconcileHandlers(deps: MappingReconcileDeps) {
       showToast("请先导入映射表或从商品资料同步", "warning");
       return;
     }
-    const resolved = resolveMappingSourceTable(opOrders, currentData);
+    if (opOrders.length === 0) {
+      showToast("请先在经营分析导入订单（映射已对接主数据）", "warning");
+      return;
+    }
+    const resolved = resolveMappingSourceTable(opOrders, []);
     if (!resolved) {
       showToast("请先在经营分析导入订单", "warning");
       return;
@@ -151,12 +155,11 @@ export function useMappingReconcileHandlers(deps: MappingReconcileDeps) {
       showToast("请先导入收款流水", "warning");
       return;
     }
-    if (opOrders.length === 0 && currentData.length === 0) {
-      showToast("请先在经营分析导入订单", "warning");
+    if (opOrders.length === 0) {
+      showToast("请先在经营分析导入订单（收款对账已对接主数据）", "warning");
       return;
     }
-    const orderTable =
-      opOrders.length > 0 ? ordersToTable(opOrders) : currentData;
+    const orderTable = ordersToTable(opOrders);
     const reconciled = runPaymentReconcile(orderTable, paymentFile.data);
     if (!reconciled.length) {
       showToast("对账结果为空", "warning");
@@ -169,7 +172,7 @@ export function useMappingReconcileHandlers(deps: MappingReconcileDeps) {
       summarizeReconcile(reconciled);
     showToast(
       `对账完成：已核销 ${matched}（其中单号/备注匹配 ${byId}）· 未匹配 ${unmatched} · 未认领 ${unclaimed}（订单：${
-        opOrders.length > 0 ? `经营分析 ${opOrders.length} 单` : "当前表格"
+        `经营分析 ${opOrders.length} 单`
       }）`,
       "success",
     );

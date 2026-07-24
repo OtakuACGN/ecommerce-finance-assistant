@@ -12,6 +12,9 @@ import BillTab from "./components/BillTab";
 import SalesRankTab from "./components/SalesRankTab";
 import ZtcTab from "./components/ZtcTab";
 import ProfitCalcTab from "./components/ProfitCalcTab";
+import ExpressReconcileTab from "./components/ExpressReconcileTab";
+import AfterSaleTab from "./components/AfterSaleTab";
+import AppNav from "./components/AppNav";
 import OperatingImportPanel from "./components/OperatingImportPanel";
 import MonthlySummary from "./components/MonthlySummary";
 import {
@@ -57,6 +60,7 @@ import {
   formatBossOnePagerText,
   guessShopNameFromFile,
   ingestForOperating,
+  billRecordFromPdd,
   normalizeShopName,
   sourceKindLabel,
 } from "./services/pddBusiness";
@@ -74,21 +78,20 @@ import {
   loadProductMasterMeta,
   saveProductMasterMeta,
   countPendingCostProducts,
+  analyzeProductMasterState,
   type ProductMasterMeta,
 } from "./services/productMasterMeta";
 import OperatingActionBar from "./components/OperatingActionBar";
 import { useBillRefundHandlers } from "./hooks/useBillRefundHandlers";
 import { useMappingReconcileHandlers } from "./hooks/useMappingReconcileHandlers";
+import type { AppTab } from "./types/appTab";
+import {
+  formatOpBillPeriod,
+  formatOpOrdersPeriod,
+  uniqueShopNames,
+} from "./utils/opPeriod";
 
-type Tab =
-  | "mapping"
-  | "reconcile"
-  | "bill"
-  | "salesRank"
-  | "ztc"
-  | "profit"
-  | "monthly"
-  | "operating";
+type Tab = AppTab;
 
 function App() {
   const desktopReady = hasElectronAPI();
@@ -502,45 +505,35 @@ function App() {
         if (stats.products > 0) {
           const pending = stats.productPending;
           const total = stats.productTotal || stats.products;
-          // 成本齐全且已有订单：导入后可一键重算
-          if (pending === 0 && localOrders.length > 0) {
-            // 预置动作，用户点「生成经营报表」即可；也可稍后点总览按钮
+          const st = analyzeProductMasterState(localProducts);
+          let orderMissing = 0;
+          try {
+            if (localOrders.length > 0) {
+              orderMissing = buildProductMasterFromOrders(
+                localOrders,
+                localProducts,
+                "missing_cost",
+              ).length;
+            }
+          } catch {
+            orderMissing = 0;
           }
+          const filled = st.withCost;
           setConfirmDialog({
-            title: "商品资料已导入",
+            title: "商品资料已回导",
             message:
-              pending > 0
-                ? `共 ${total} 个规格，仍有 ${pending} 个待填成本。\n建议：生成报表后查看「待补SKU」，或继续导出待补规格填成本。`
-                : `共 ${total} 个规格，成本已齐全。\n可直接点「生成经营报表」。`,
+              pending > 0 || orderMissing > 0
+                ? `共 ${total} 个规格：已有成本 ${filled} · 资料仍待填 ${pending} · 订单侧仍缺成本 ${orderMissing}。完整率 ${st.fillRate}%。\n可一键跳转待补 SKU，或导出仍缺规格。`
+                : `共 ${total} 个规格，成本已齐全（完整率 100%）。可直接生成经营报表。`,
             onConfirm: () => setConfirmDialog(null),
-            cancelLabel: "知道了",
-            confirmLabel: pending > 0 ? "稍后处理" : "好的",
+            cancelLabel: "关闭",
+            confirmLabel: pending > 0 || orderMissing > 0 ? "稍后" : "好的",
             actions: [
-              {
-                label: "生成经营报表",
-                primary: true,
-                className:
-                  "px-3 py-2 text-white rounded-lg text-sm bg-blue-600 hover:bg-blue-700",
-                onClick: () => {
-                  setConfirmDialog(null);
-                  setActiveTab("operating");
-                  setPendingOpAction("build");
-                },
-              },
-              ...(pending > 0
+              ...(pending > 0 || orderMissing > 0
                 ? [
                     {
-                      label: "导出待补规格",
-                      className:
-                        "px-3 py-2 text-white rounded-lg text-sm bg-amber-500 hover:bg-amber-600",
-                      onClick: () => {
-                        setConfirmDialog(null);
-                        setActiveTab("operating");
-                        setPendingOpAction("export_missing");
-                      },
-                    },
-                    {
-                      label: "查看待补SKU",
+                      label: "一键跳转待补SKU",
+                      primary: true,
                       className:
                         "px-3 py-2 text-white rounded-lg text-sm bg-violet-600 hover:bg-violet-700",
                       onClick: () => {
@@ -549,8 +542,29 @@ function App() {
                         setPendingOpAction("jump_unmatched");
                       },
                     },
+                    {
+                      label: "导出仍缺规格",
+                      className:
+                        "px-3 py-2 text-white rounded-lg text-sm bg-amber-500 hover:bg-amber-600",
+                      onClick: () => {
+                        setConfirmDialog(null);
+                        setActiveTab("operating");
+                        setPendingOpAction("export_missing");
+                      },
+                    },
                   ]
                 : []),
+              {
+                label: "生成经营报表",
+                primary: !(pending > 0 || orderMissing > 0),
+                className:
+                  "px-3 py-2 text-white rounded-lg text-sm bg-blue-600 hover:bg-blue-700",
+                onClick: () => {
+                  setConfirmDialog(null);
+                  setActiveTab("operating");
+                  setPendingOpAction("build");
+                },
+              },
             ],
           });
         }
@@ -1106,8 +1120,15 @@ function App() {
           ["导出时间", new Date().toLocaleString("zh-CN")],
         ];
         const pendingIdx = productMasterPendingRowIndexes(rows);
+        const pendingOnlyRows = rows.filter((r) => !r.hasCost);
+        const pendingSheet = productMasterImportTable(pendingOnlyRows);
         await exportWorkbook(
           [
+            {
+              name: "待填成本",
+              data: pendingSheet.length > 1 ? pendingSheet : [["填写标记", "说明"], ["", "无待填项"]],
+              highlightRowIndexes: pendingOnlyRows.map((_, i) => i),
+            },
             {
               name: "商品资料",
               data: importSheet,
@@ -1129,7 +1150,9 @@ function App() {
           lastMode: "generated",
         }));
         showToast(
-          `已导出商品资料（${tag}）${rows.length} 个规格，其中待填 ${pending}。请填成本后重新导入（步骤③）`,
+          pending > 0
+            ? `已导出（${tag}）${rows.length} 规格 · 待填 ${pending} 已置顶/独立成表「待填成本」。填完「参考成本价」后回导（步骤③）`
+            : `已导出（${tag}）${rows.length} 规格，成本已齐全。可回导或直接生成报表`,
           "success",
         );
       } catch (error) {
@@ -1412,7 +1435,32 @@ function App() {
   }, [opReport, reportError, showToast]);
 
 
-  const {
+  
+  const handleSyncBillsFromOperating = useCallback(() => {
+    if (opBillLines.length === 0) {
+      showToast("请先在经营分析导入账务明细", "warning");
+      return;
+    }
+    const record = billRecordFromPdd(
+      {
+        name: "经营分析账务",
+        path: "",
+        headers: [],
+        data: [],
+      },
+      opBillLines,
+    );
+    setBillRecords((prev) => {
+      const rest = prev.filter((b) => b.fileName !== "经营分析账务");
+      return [...rest, record];
+    });
+    showToast(
+      `已从经营分析同步账务：${opBillLines.length} 行 · ${record.date} · ${record.orderCount} 单`,
+      "success",
+    );
+  }, [opBillLines, showToast]);
+
+const {
     handleImportMapping,
     handleSyncMappingsFromProducts,
     handleApplyMapping,
@@ -1473,50 +1521,7 @@ function App() {
         </div>
       )}
 
-      <div className="app-header px-4 py-2.5 flex items-center gap-3 flex-wrap">
-        <div className="brand-badge mr-1">
-          <div className="brand-mark">通</div>
-          <div className="leading-tight">
-            <div className="text-sm font-bold text-slate-800">店财通</div>
-            <div className="text-[11px] text-slate-500">拼多多经营分析 · 毛利对账</div>
-          </div>
-        </div>
-
-        <div className="h-8 w-px bg-slate-200 hidden md:block" />
-
-        <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-          {[
-            { key: "operating", label: "经营分析" },
-            { key: "ztc", label: "直通车细分" },
-            { key: "profit", label: "利润测算" },
-            { key: "salesRank", label: "销售排行" },
-            { key: "monthly", label: "月度汇总" },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key as Tab)}
-              className={`tab-pill ${activeTab === tab.key ? "tab-pill-active" : "tab-pill-idle"}`}
-            >
-              {tab.label}
-            </button>
-          ))}
-          <span className="mx-1 h-5 w-px bg-slate-200 hidden sm:inline-block" aria-hidden />
-          {[
-            { key: "mapping", label: "SKU映射" },
-            { key: "reconcile", label: "收款对账" },
-            { key: "bill", label: "账单对账" },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key as Tab)}
-              className={`tab-pill ${activeTab === tab.key ? "tab-pill-active" : "tab-pill-idle"}`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex-1" />
-      </div>
+      <AppNav activeTab={activeTab} onChange={setActiveTab} />
 
 
 
@@ -1905,6 +1910,7 @@ function App() {
         <MappingTab
           opProductsCount={opProducts.length}
           opOrdersCount={opOrders.length}
+          opOrdersPeriod={formatOpOrdersPeriod(opOrders)}
           skuMappingsCount={skuMappings.length}
           hasMappingFile={!!mappingFile}
           mappingFileName={mappingFile?.name}
@@ -1930,6 +1936,8 @@ function App() {
             (s, o) => s + (o.merchantReceived || 0),
             0,
           )}
+          opOrdersPeriod={formatOpOrdersPeriod(opOrders)}
+          opShopNames={uniqueShopNames(opOrders)}
           desktopReady={desktopReady}
           paymentFile={paymentFile}
           reconcileResult={reconcileResult}
@@ -1952,6 +1960,12 @@ function App() {
           desktopReady={desktopReady}
           showBillDetail={showBillDetail}
           setShowBillDetail={setShowBillDetail}
+          opBillLinesCount={opBillLines.length}
+          opBillPeriod={formatOpBillPeriod(opBillLines)}
+          opOrdersCount={opOrders.length}
+          opOrdersPeriod={formatOpOrdersPeriod(opOrders)}
+          onSyncFromOperating={handleSyncBillsFromOperating}
+          onGoOperating={() => setActiveTab("operating")}
           onImportBill={handleImportBill}
           onImportCommission={handleImportCommissionDetails}
           onGenerateAccrual={handleGenerateAccrual}
@@ -1960,6 +1974,29 @@ function App() {
           onExportRefundLoss={handleExportRefundLoss}
           onRemoveBill={handleRemoveBill}
           onError={reportError}
+        />
+      )}
+
+      
+      {/* ========== 快递对账 ========== */}
+      {activeTab === "express" && (
+        <ExpressReconcileTab
+          desktopReady={desktopReady}
+          onError={reportError}
+          showToast={showToast}
+          opOrders={opOrders}
+          onGoOperating={() => setActiveTab("operating")}
+        />
+      )}
+
+      {/* ========== 售后分析 ========== */}
+      {activeTab === "aftersale" && (
+        <AfterSaleTab
+          desktopReady={desktopReady}
+          onError={reportError}
+          showToast={showToast}
+          opOrders={opOrders}
+          onGoOperating={() => setActiveTab("operating")}
         />
       )}
 
@@ -2051,3 +2088,5 @@ function App() {
 }
 
 export default App;
+
+

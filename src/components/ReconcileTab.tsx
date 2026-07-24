@@ -4,6 +4,8 @@ import type { FileData } from "../utils/excel";
 export interface ReconcileTabProps {
   opOrdersCount: number;
   opOrdersReceivedTotal: number;
+  opOrdersPeriod?: string;
+  opShopNames?: string[];
   desktopReady: boolean;
   paymentFile: FileData | null;
   reconcileResult: any[][];
@@ -17,6 +19,8 @@ export interface ReconcileTabProps {
 export default function ReconcileTab({
   opOrdersCount,
   opOrdersReceivedTotal,
+  opOrdersPeriod,
+  opShopNames = [],
   desktopReady,
   paymentFile,
   reconcileResult,
@@ -32,7 +36,8 @@ export default function ReconcileTab({
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="font-semibold text-gray-800 mb-1">🧾 收款对账</h2>
           <p className="text-sm text-gray-500 mb-4">
-            收款流水 vs 经营分析订单：优先订单号 → 备注含单号 → 金额(+日期)
+            收款流水 vs <strong className="text-slate-700">经营分析订单</strong>
+            （主数据，不依赖旧「当前表格」）：优先订单号 → 备注含单号 → 金额(+日期)
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center">
@@ -76,6 +81,14 @@ export default function ReconcileTab({
               <div className="text-xs text-gray-500 mt-1">
                 实收合计 ¥{opOrdersReceivedTotal.toFixed(2)}
               </div>
+              {opOrdersPeriod ? (
+                <div className="text-[11px] text-blue-800/80 mt-1">账期 {opOrdersPeriod}</div>
+              ) : null}
+              {opShopNames.length > 0 ? (
+                <div className="text-[11px] text-slate-500 mt-0.5 truncate px-1" title={opShopNames.join("、")}>
+                  店铺 {opShopNames.join("、")}
+                </div>
+              ) : null}
               {opOrdersCount === 0 && (
                 <button
                   type="button"

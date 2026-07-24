@@ -3,6 +3,7 @@ import DataTable from "./DataTable";
 export interface MappingTabProps {
   opProductsCount: number;
   opOrdersCount: number;
+  opOrdersPeriod?: string;
   skuMappingsCount: number;
   hasMappingFile: boolean;
   mappingFileName?: string;
@@ -18,6 +19,7 @@ export interface MappingTabProps {
 export default function MappingTab({
   opProductsCount,
   opOrdersCount,
+  opOrdersPeriod,
   skuMappingsCount,
   hasMappingFile,
   mappingFileName,
@@ -46,6 +48,9 @@ export default function MappingTab({
             <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
               <div className="text-xs text-blue-600">经营分析订单</div>
               <div className="font-semibold text-blue-900">{opOrdersCount} 单</div>
+              {opOrdersPeriod ? (
+                <div className="text-[11px] text-blue-700/80 mt-0.5">{opOrdersPeriod}</div>
+              ) : null}
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <div className="text-xs text-slate-500">当前映射规则</div>
@@ -98,6 +103,11 @@ export default function MappingTab({
               <button type="button" className="ml-2 underline" onClick={onGoOperating}>
                 去导入
               </button>
+            </div>
+          )}
+          {opProductsCount > 0 && skuMappingsCount === 0 && (
+            <div className="mb-3 text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+              经营分析已有 {opProductsCount} 个规格，可直接「从商品资料同步」生成映射，无需另导文件。
             </div>
           )}
           {skuMappingsCount > 0 && (

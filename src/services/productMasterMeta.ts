@@ -62,3 +62,24 @@ export function countPendingCostProducts(
 ): number {
   return products.filter((p) => (p.costPrice || 0) + (p.packCost || 0) <= 0).length;
 }
+
+
+/** 商品资料闭环：导入/导出后统一统计 */
+export function analyzeProductMasterState(
+  products: { costPrice?: number; packCost?: number; skuCode?: string; specName?: string; productCode?: string }[],
+): {
+  total: number;
+  pending: number;
+  withCost: number;
+  fillRate: number;
+} {
+  const total = products.length;
+  const pending = countPendingCostProducts(products);
+  const withCost = Math.max(0, total - pending);
+  return {
+    total,
+    pending,
+    withCost,
+    fillRate: total > 0 ? Math.round((withCost / total) * 1000) / 10 : 0,
+  };
+}
