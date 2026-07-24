@@ -82,6 +82,8 @@ export default function OperatingSettingsPanel({
                   : "未填"}
                 · 包材 ¥{opCostSettings.defaultPackCost}
                 · 广告分摊 {opCostSettings.adAllocateMode}
+                · 退货损耗{" "}
+                {Math.round((opCostSettings.returnRestockRate || 0) * 100)}%
                 · 账务平台费
                 {opCostSettings.feeStackMode === "settings_only"
                   ? "不进毛利"
@@ -182,7 +184,7 @@ export default function OperatingSettingsPanel({
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-500">退货损耗比例(0-1)</span>
+                <span className="text-xs text-gray-500" title="发货后全额退的货本损耗比例；0=全额回收货本，0.1=计10%损耗">退货损耗比例(0=全额回收)</span>
                 <input
                   type="number"
                   step="0.01"
@@ -202,7 +204,7 @@ export default function OperatingSettingsPanel({
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-500">二次包装/入库(元/单)</span>
+                <span className="text-xs text-gray-500" title="发货后全额退每单二次包装/入库成本，可填0">二次包装/入库(元/单，可0)</span>
                 <input
                   type="number"
                   step="0.1"
@@ -443,8 +445,8 @@ export default function OperatingSettingsPanel({
                     }))
                   }
                 />
-                <span className="text-xs text-gray-700">
-                  发货后退款仍计全额商品成本
+                <span className="text-xs text-gray-700" title="勾选后：发货后全额退仍按全额商品成本计，不走「退货损耗比例」">
+                  发货后全额退仍计全额商品成本
                 </span>
               </label>
               <label className="flex items-center gap-2 mt-5">

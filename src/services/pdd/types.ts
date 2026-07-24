@@ -129,7 +129,7 @@ export interface CostSettings {
   forceDefaultPack: boolean;
   defaultWeightKg: number;
   countProductCostOnRefundedShip: boolean;
-  /** 发货后退款：商品损耗比例 0-1 */
+  /** 发货后全额退：货损比例 0-1（0=默认全额回收货本，可自定义） */
   returnRestockRate: number;
   /** 发货后退款：二次包装/入库 元/单 */
   returnRepackCost: number;
@@ -196,7 +196,7 @@ export const DEFAULT_COST_SETTINGS: CostSettings = {
   forceDefaultPack: false,
   defaultWeightKg: 0.5,
   countProductCostOnRefundedShip: false,
-  returnRestockRate: 0.1,
+  returnRestockRate: 0,
   returnRepackCost: 0.5,
   usePostageIncome: true,
   adAllocateMode: "by_product", // 有商品推广时按商品ID摊到单；无则仅汇总扣总广告
@@ -237,6 +237,12 @@ export const COST_SETTING_TEMPLATES: CostSettingsTemplate[] = [
     name: "按GMV扣点8%",
     desc: "品牌按商品总价扣 8%，税 0",
     patch: { brandPointPct: 8, ecommerceTaxPct: 0, feeBaseMode: "goodsTotal" },
+  },
+  {
+    id: "zero_return_loss",
+    name: "零退货损耗",
+    desc: "发货后全额退默认全额回收货本（损耗0），二次包装保持",
+    patch: { returnRestockRate: 0 },
   },
   {
     id: "high_return_loss",

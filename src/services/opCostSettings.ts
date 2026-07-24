@@ -7,6 +7,8 @@ import {
 } from "./pddBusiness";
 
 export const OP_COST_STORAGE_KEY = "pdd-operating-cost-settings";
+/** 一次性：旧默认退货损耗 0.1 → 0（可在参数里改回） */
+export const OP_COST_MIGRATE_RESTOCK0_KEY = "pdd-operating-cost-migrate-restock0";
 
 export function cloneDefaultCostSettings(): CostSettings {
   return {
@@ -95,7 +97,23 @@ export function loadOpCostSettings(): CostSettings {
   try {
     const raw = localStorage.getItem(OP_COST_STORAGE_KEY);
     if (!raw) return cloneDefaultCostSettings();
-    return normalizeCostSettings(JSON.parse(raw) as Partial<CostSettings>);
+    const settings = normalizeCostSettings(JSON.parse(raw) as Partial<CostSettings>);
+    // 旧版默认 10% 货损 → 新默认 0（全额回收）；用户之后仍可自定义
+    if (
+      typeof localStorage !== "undefined" &&
+      !localStorage.getItem(OP_COST_MIGRATE_RESTOCK0_KEY)
+    ) {
+      localStorage.setItem(OP_COST_MIGRATE_RESTOCK0_KEY, "1");
+      if (Math.abs(Number(settings.returnRestockRate) - 0.1) < 1e-9) {
+        settings.returnRestockRate = 0;
+        try {
+          localStorage.setItem(OP_COST_STORAGE_KEY, JSON.stringify(settings));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return settings;
   } catch {
     return cloneDefaultCostSettings();
   }

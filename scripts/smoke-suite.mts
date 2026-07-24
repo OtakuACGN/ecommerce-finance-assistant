@@ -210,6 +210,35 @@ const pdd = await load("src/services/pddBusiness.ts");
       ok("money.partial_no_return_loss", !!p1 && Math.abs(p1.returnLoss || 0) < 0.01, p1 ? String(p1.returnLoss) : "missing");
       ok("money.unship_full_rev0", !!f1 && Math.abs(f1.revenue) < 0.01 && f1.refundKind === "full", f1 ? `${f1.refundKind}/${f1.revenue}` : "missing");
       ok("money.summary_profit_recon", Math.abs(repP.summary.estimatedProfitBeforeAd - repP.orderProfits.reduce((s, r) => s + r.estimatedProfit, 0)) < 0.02, String(repP.summary.estimatedProfitBeforeAd));
+
+    // money-critical: full post-ship — default restock 0 = cost recovered; custom rate works
+    {
+      const ordersF = [{
+        orderId: "FULL1", productName: "垫", status: "已收货，退款成功", afterSale: "退款成功", qty: 1,
+        goodsTotal: 89, buyerPaid: 89, merchantReceived: 89, platformDiscount: 0, shopDiscount: 0,
+        productId: "P9", specName: "标准", merchantSku: "SKU9", merchantSpu: "SPU9",
+        dealTime: "2026-06-01", shipTime: "2026-06-02", confirmTime: "2026-06-05", postage: 0,
+        expressNo: "YT9", expressCompany: "圆通", shopName: "shopA",
+      }];
+      const productsF = [{
+        productCode: "SPU9", productName: "垫", skuCode: "SKU9", specName: "标准",
+        salePrice: 89, costPrice: 35, packCost: 0, weightKg: 0.5, stock: 0,
+      }];
+      const billF = [
+        { orderId: "FULL1", time: "2026-06-01", income: 89, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+        { orderId: "FULL1", time: "2026-06-06", income: 0, expense: 89, billType: "退款", remark: "", bizDesc: "" },
+      ];
+      const baseF = { ...(pdd.DEFAULT_COST_SETTINGS || {}), adAllocateMode: "none", defaultPackCost: 0, firstWeightFee: 0, additionalWeightFee: 0, returnRepackCost: 0 };
+      const zero = pdd.buildOperatingReport(ordersF, billF, productsF, [], { ...baseF, returnRestockRate: 0 }, []);
+      const ten = pdd.buildOperatingReport(ordersF, billF, productsF, [], { ...baseF, returnRestockRate: 0.1 }, []);
+      const z = zero.orderProfits[0];
+      const t10 = ten.orderProfits[0];
+      ok("money.full_default_zero_restock", Math.abs((pdd.DEFAULT_COST_SETTINGS || {}).returnRestockRate || 0) < 1e-9, String((pdd.DEFAULT_COST_SETTINGS || {}).returnRestockRate));
+      ok("money.full_rev0", !!z && Math.abs(z.revenue) < 0.01 && z.refundKind === "full", z ? `${z.refundKind}/${z.revenue}` : "missing");
+      ok("money.full_cost_recovered", !!z && Math.abs(z.costTotal) < 0.01, z ? String(z.costTotal) : "missing");
+      ok("money.full_return_loss0", !!z && Math.abs(z.returnLoss || 0) < 0.01, z ? String(z.returnLoss) : "missing");
+      ok("money.full_custom_restock10", !!t10 && Math.abs((t10.returnLoss || 0) - 3.5) < 0.01 && Math.abs(t10.costTotal) < 0.01, t10 ? `${t10.returnLoss}/${t10.costTotal}` : "missing");
+    }
     }
     }
   }
