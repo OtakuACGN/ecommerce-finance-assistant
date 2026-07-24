@@ -5,12 +5,10 @@ release/
 output/
 *.log
 .DS_Store
-scripts/_patch*.mjs
-scripts/_*.json
-scripts/_status-*
-scripts/_audit-*
-scripts/_dump.mjs
-scripts/_settings-roundtrip.json
+# temp agent/debug scripts
+scripts/_*
+scripts/_*/
+*.bak
 tmp_patch.py
 smoke_profit.cjs
 smoke_test.cjs

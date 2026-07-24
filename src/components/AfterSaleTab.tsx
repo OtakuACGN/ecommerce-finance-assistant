@@ -152,6 +152,22 @@ export default function AfterSaleTab({
     return afterSalesToTable(result.rows, filter);
   }, [result, filter]);
 
+  const emptyDescStats = useMemo(() => {
+    if (!result) return { count: 0, pct: 0 };
+    const rows = result.rows.filter((r) => r.isSuccess);
+    const empty = rows.filter(
+      (r) =>
+        r.descClusterKey === 'empty' ||
+        r.descClusterLabel === '无有效描述' ||
+        !(r.description || '').trim(),
+    );
+    const base = rows.length || 1;
+    return {
+      count: empty.length,
+      pct: Math.round((empty.length / base) * 1000) / 10,
+    };
+  }, [result]);
+
   const filterCount = (k: AfterSaleFilter): number => {
     if (!result) return 0;
     const s = result.summary;
@@ -449,6 +465,13 @@ export default function AfterSaleTab({
                   订单基数：{s.orderSourceLabel || "未对接"}
                 </span>
               </div>
+              {emptyDescStats.count > 0 ? (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 leading-relaxed">
+                  有 <strong>{emptyDescStats.count}</strong> 笔成功售后（约 {emptyDescStats.pct}%）
+                  描述为空，已归入「无有效描述」。排行看<strong>原因大项</strong>即可；
+                  小项为空表示大项无补充描述，不是聚类失败。
+                </div>
+              ) : null}
               <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 <button
                   type="button"
