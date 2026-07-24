@@ -146,6 +146,69 @@ const pdd = await load("src/services/pddBusiness.ts");
       ok("diag.ad_intersection0", (rep3.summary.adIdIntersection || 0) === 0, String(rep3.summary.adIdIntersection));
       ok("diag.ad_warning", String(rep3.summary.adMatchWarning || "").includes("交集"), String(rep3.summary.adMatchWarning || ""));
       ok("diag.ad_unallocated", Math.abs((rep3.summary.adUnallocated || 0) - 30) < 0.01, String(rep3.summary.adUnallocated));
+
+    // money-critical: unknown refund keeps revenue + product cost (not full-refund loss path)
+    {
+      const ordersU = [{
+        orderId: "U1", productName: "垫", status: "已收货，退款成功", afterSale: "退款成功", qty: 1,
+        goodsTotal: 89, buyerPaid: 89, merchantReceived: 89, platformDiscount: 0, shopDiscount: 0,
+        productId: "P9", specName: "标准", merchantSku: "SKU9", merchantSpu: "SPU9",
+        dealTime: "2026-06-01", shipTime: "2026-06-02", confirmTime: "2026-06-05", postage: 0,
+        expressNo: "YT1", expressCompany: "圆通", shopName: "shopA",
+      }];
+      const productsU = [{
+        productCode: "SPU9", productName: "垫", skuCode: "SKU9", specName: "标准",
+        salePrice: 89, costPrice: 35, packCost: 0, weightKg: 0.5, stock: 0,
+      }];
+      const billU = [{
+        orderId: "U1", time: "2026-06-01", income: 89, expense: 0,
+        billType: "交易收入", remark: "", bizDesc: "",
+      }];
+      const settingsU = { ...(pdd.DEFAULT_COST_SETTINGS || {}), adAllocateMode: "none", returnRestockRate: 0.1, returnRepackCost: 1, defaultPackCost: 0 };
+      const repU = pdd.buildOperatingReport(ordersU, billU, productsU, [], settingsU, []);
+      const rowU = repU.orderProfits[0];
+      ok("money.unknown_kind", rowU.refundKind === "unknown", String(rowU.refundKind));
+      ok("money.unknown_revenue", Math.abs(rowU.revenue - 89) < 0.01, String(rowU.revenue));
+      ok("money.unknown_keeps_cost", Math.abs(rowU.costTotal - 35) < 0.01, String(rowU.costTotal));
+      ok("money.unknown_no_return_loss", Math.abs(rowU.returnLoss || 0) < 0.01, String(rowU.returnLoss));
+    }
+    // money-critical: partial revenue = income - refund; full unship revenue 0
+    {
+      const ordersP = [
+        {
+          orderId: "P1", productName: "垫", status: "已收货，退款成功", afterSale: "退款成功", qty: 1,
+          goodsTotal: 69, buyerPaid: 69, merchantReceived: 69, platformDiscount: 0, shopDiscount: 0,
+          productId: "P1", specName: "标准", merchantSku: "S1", merchantSpu: "SP1",
+          dealTime: "2026-06-01", shipTime: "2026-06-02", confirmTime: "", postage: 0,
+          expressNo: "YT1", expressCompany: "圆通", shopName: "shopA",
+        },
+        {
+          orderId: "F1", productName: "垫", status: "未发货，退款成功", afterSale: "退款成功", qty: 1,
+          goodsTotal: 50, buyerPaid: 50, merchantReceived: 50, platformDiscount: 0, shopDiscount: 0,
+          productId: "P1", specName: "标准", merchantSku: "S1", merchantSpu: "SP1",
+          dealTime: "2026-06-01", shipTime: "", confirmTime: "", postage: 0,
+          expressNo: "", expressCompany: "", shopName: "shopA",
+        },
+      ];
+      const productsP = [{
+        productCode: "SP1", productName: "垫", skuCode: "S1", specName: "标准",
+        salePrice: 69, costPrice: 20, packCost: 0, weightKg: 0.5, stock: 0,
+      }];
+      const billP = [
+        { orderId: "P1", time: "2026-06-01", income: 69, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+        { orderId: "P1", time: "2026-06-03", income: 0, expense: 15, billType: "退款", remark: "", bizDesc: "" },
+        { orderId: "F1", time: "2026-06-01", income: 50, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+        { orderId: "F1", time: "2026-06-02", income: 0, expense: 50, billType: "退款", remark: "", bizDesc: "" },
+      ];
+      const settingsP = { ...(pdd.DEFAULT_COST_SETTINGS || {}), adAllocateMode: "none", defaultPackCost: 0, firstWeightFee: 0, additionalWeightFee: 0 };
+      const repP = pdd.buildOperatingReport(ordersP, billP, productsP, [], settingsP, []);
+      const p1 = repP.orderProfits.find((r) => r.orderId === "P1");
+      const f1 = repP.orderProfits.find((r) => r.orderId === "F1");
+      ok("money.partial_rev", !!p1 && Math.abs(p1.revenue - 54) < 0.01, p1 ? String(p1.revenue) : "missing");
+      ok("money.partial_kind", !!p1 && p1.refundKind === "partial", p1 ? String(p1.refundKind) : "missing");
+      ok("money.unship_full_rev0", !!f1 && Math.abs(f1.revenue) < 0.01 && f1.refundKind === "full", f1 ? `${f1.refundKind}/${f1.revenue}` : "missing");
+      ok("money.summary_profit_recon", Math.abs(repP.summary.estimatedProfitBeforeAd - repP.orderProfits.reduce((s, r) => s + r.estimatedProfit, 0)) < 0.02, String(repP.summary.estimatedProfitBeforeAd));
+    }
     }
   }
 

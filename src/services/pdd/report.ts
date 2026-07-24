@@ -209,8 +209,19 @@ export function buildOperatingReport(
         (postShipRefund || shipped) && refundRatio > 0.01
           ? Math.max(0, settings.returnRepackCost || 0)
           : 0;
+    } else if (refundKind === "unknown") {
+      // 待账务：收入按残留保留，成本按保留占比计（默认 residualRatio=1），
+      // 绝不当全额退核销（避免「留收入 + 退货损耗」双向失真）
+      const keep = residualRatio > 0 ? residualRatio : 1;
+      if (shipped || completed) {
+        costTotal = fullProductCost * keep;
+      } else {
+        costTotal = 0;
+      }
+      returnLoss = 0;
+      repackCost = 0;
     } else {
-      // full / unknown refund
+      // full refund
       if (postShipRefund && settings.countProductCostOnRefundedShip) {
         costTotal = fullProductCost;
         returnLoss = 0;
