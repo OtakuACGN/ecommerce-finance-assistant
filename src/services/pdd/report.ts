@@ -508,6 +508,19 @@ export function buildOperatingReport(
     if (!monthMap.has(m)) monthMap.set(m, []);
     monthMap.get(m)!.push(o);
   }
+  // 分天广告按自然月汇总；无分天时按各月商家实收占比分摊总广告
+  const adSpendByMonth = new Map<string, number>();
+  for (const d of adDays) {
+    const raw = String(d.date || "").trim();
+    const m = raw.match(/(\d{4})[-/年.](\d{1,2})/);
+    if (!m) continue;
+    const key = `${m[1]}-${String(m[2]).padStart(2, "0")}`;
+    adSpendByMonth.set(key, (adSpendByMonth.get(key) || 0) + (d.spend || 0));
+  }
+  const monthMrTotal = Array.from(monthMap.entries())
+    .filter(([m]) => m !== "未知")
+    .reduce((s, [, rows]) => s + rows.reduce((ss, r) => ss + r.merchantReceived, 0), 0);
+
   const months: MonthMetrics[] = Array.from(monthMap.entries())
     .filter(([m]) => m !== "未知")
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -518,7 +531,19 @@ export function buildOperatingReport(
       const shipped = rows.filter((r) => r.isShipped);
       const psr = rows.filter((r) => r.isPostShipRefund);
       const pb = rows.reduce((s, r) => s + r.estimatedProfit, 0);
-      const pa = rows.reduce((s, r) => s + r.estimatedProfitAfterAd, 0);
+      const allocated = rows.reduce((s, r) => s + r.adAllocated, 0);
+      // 该月应扣广告：优先分天；否则按实收占比；且不少于已摊到单的金额
+      let monthAd = adSpendByMonth.get(month) || 0;
+      if (monthAd <= 0 && adSpend > 0 && monthMrTotal > 0) {
+        monthAd = (mr / monthMrTotal) * adSpend;
+      }
+      // 使用商品推广总额时，分天合计可能略有差异，按比例校准到 adSpend
+      const daySum = Array.from(adSpendByMonth.values()).reduce((s, v) => s + v, 0);
+      if (daySum > 0 && adSpend > 0 && Math.abs(daySum - adSpend) > 0.05) {
+        monthAd = monthAd * (adSpend / daySum);
+      }
+      const monthAdCost = Math.max(allocated, monthAd);
+      const pa = pb - monthAdCost;
       return {
         month,
         orderCount: rows.length,
@@ -534,7 +559,7 @@ export function buildOperatingReport(
         profitBeforeAd: pb,
         profitAfterAd: pa,
         profitMargin: mr > 0 ? pa / mr : 0,
-        adAllocated: rows.reduce((s, r) => s + r.adAllocated, 0),
+        adAllocated: monthAdCost,
       };
     });
   const latestMonth = months.length ? months[months.length - 1].month : undefined;

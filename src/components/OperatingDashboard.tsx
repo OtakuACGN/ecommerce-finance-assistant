@@ -231,16 +231,15 @@ export default function OperatingDashboard({
                     （=退货退款主口径）
                   </div>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 min-h-[88px]">
-                  <div className="text-xs text-gray-500">广告花费（汇总已扣）</div>
-                  <div className="text-sm font-bold text-red-600">
-                    ¥{opReport.summary.adSpend.toFixed(2)}
+                <div className="bg-red-50 rounded-xl p-3 min-h-[88px] border border-red-100">
+                  <div className="text-xs text-red-700/80">广告花费（已从毛利扣除）</div>
+                  <div className="text-lg font-bold text-red-600">
+                    -¥{opReport.summary.adSpend.toFixed(2)}
                   </div>
-                  <div className="text-[11px] text-gray-500 mt-0.5">
-                    明细分摊 ¥{opReport.summary.adAllocatedTotal.toFixed(2)}
-                    {opReport.summary.adAllocatedTotal <= 0.001 && opReport.summary.adSpend > 0
-                      ? " · 仅汇总扣（导入商品推广可按ID摊到单）"
-                      : " · 已摊到订单"}
+                  <div className="text-[11px] text-slate-600 mt-0.5 leading-snug">
+                    {opReport.summary.adAllocatedTotal > 0.001
+                      ? `其中明细已摊 ¥${opReport.summary.adAllocatedTotal.toFixed(2)}，其余在汇总扣完`
+                      : "当前未摊到订单明细，但汇总毛利已全额扣减这笔广告"}
                   </div>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3">
@@ -249,13 +248,13 @@ export default function OperatingDashboard({
                     ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(2)}
                   </div>
                 </div>
-                <div className="bg-green-50 rounded-lg p-3">
+                <div className="bg-green-50 rounded-lg p-3 border border-green-200">
                   <div className="text-xs text-gray-500">毛利(已扣广告)</div>
                   <div className="text-lg font-bold text-green-700">
                     ¥{opReport.summary.estimatedProfitAfterAd.toFixed(2)}
                   </div>
-                  <div className="text-[11px] text-gray-500 mt-0.5">
-                    = 未扣广告 − 广告花费
+                  <div className="text-[11px] text-green-800/80 mt-0.5">
+                    {opReport.summary.estimatedProfitBeforeAd.toFixed(0)} − {opReport.summary.adSpend.toFixed(0)} = {opReport.summary.estimatedProfitAfterAd.toFixed(0)}
                   </div>
                 </div>
                 <div className="bg-blue-50 rounded-lg p-3">
