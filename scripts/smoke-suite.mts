@@ -125,6 +125,28 @@ const pdd = await load("src/services/pddBusiness.ts");
     ok("ad.by_product.B2", Math.abs((byId.B2 || 0) - 10) < 0.01, String(byId.B2));
     ok("ad.by_product.B3", Math.abs((byId.B3 || 0) - 10) < 0.01, String(byId.B3));
     ok("ad.summary.deductsAll", Math.abs(report.summary.estimatedProfitBeforeAd - report.summary.estimatedProfitAfterAd - 30) < 0.5, String(report.summary.estimatedProfitAfterAd));
+
+    // diagnostics: fee attribution + ad id mismatch warning
+    {
+      const orders3 = [
+        { ...orders[0], orderId: "C1", productId: "111", status: "已发货", goodsTotal: 100, merchantReceived: 100, qty: 1 },
+        { ...orders[0], orderId: "C2", productId: "222", status: "已取消", goodsTotal: 80, merchantReceived: 80, qty: 1 },
+      ];
+      const billLines = [
+        { orderId: "C1", type: "交易收入", amount: 100, income: 100, outcome: 0 },
+      ];
+      // minimal bill lines shape may differ - use empty and rely on order path
+      const adProducts3 = [
+        { productId: "999", productName: "x", spend: 30, gmv: 0, netGmv: 0, settledGmv: 0, orders: 0, roi: 0, netRoi: 0, settledRoi: 0 },
+      ];
+      const settings3 = { ...(pdd.DEFAULT_COST_SETTINGS || {}), adAllocateMode: "by_product" };
+      const rep3 = pdd.buildOperatingReport(orders3, [], [], [], settings3, adProducts3);
+      ok("diag.cancelled_excluded", Math.abs((rep3.summary.confirmedRevenue || 0) - 100) < 0.01, String(rep3.summary.confirmedRevenue));
+      ok("diag.cancelled_count", (rep3.summary.cancelledOrderCount || 0) === 1, String(rep3.summary.cancelledOrderCount));
+      ok("diag.ad_intersection0", (rep3.summary.adIdIntersection || 0) === 0, String(rep3.summary.adIdIntersection));
+      ok("diag.ad_warning", String(rep3.summary.adMatchWarning || "").includes("交集"), String(rep3.summary.adMatchWarning || ""));
+      ok("diag.ad_unallocated", Math.abs((rep3.summary.adUnallocated || 0) - 30) < 0.01, String(rep3.summary.adUnallocated));
+    }
   }
 
   // empty/header-only workbook must not be blank

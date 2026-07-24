@@ -470,6 +470,26 @@ export function buildOperatingReport(
   const brandPointTotal = orderProfits.reduce((s, o) => s + o.brandPointFee, 0);
   const ecommerceTaxTotal = orderProfits.reduce((s, o) => s + o.ecommerceTaxFee, 0);
   const adAllocatedTotal = orderProfits.reduce((s, o) => s + o.adAllocated, 0);
+  const techFeeAttributed = orderProfits.reduce((s, o) => s + (o.techFee || 0), 0);
+  const otherFeeAttributed = orderProfits.reduce((s, o) => s + (o.otherFee || 0), 0);
+  const unknownRefundCount = orderProfits.filter((o) => o.refundKind === "unknown").length;
+  const cancelledOrderCount = orderProfits.filter((o) => /已取消/.test(String(o.status || ""))).length;
+
+  // 广告商品ID匹配诊断（仅精确ID，禁止品名兜底）
+  const orderPidSet = new Set<string>();
+  for (const o of orders) {
+    const id = normProductId(o.productId || "");
+    if (id) orderPidSet.add(id);
+  }
+  const adPidSet = new Set<string>();
+  for (const a of adProducts) {
+    const id = normProductId(a.productId || "");
+    if (id) adPidSet.add(id);
+  }
+  let adIdIntersection = 0;
+  for (const id of adPidSet) if (orderPidSet.has(id)) adIdIntersection += 1;
+  const adProductIdCount = adPidSet.size;
+  const adOrderProductIdCount = orderPidSet.size;
   // 毛利阶梯：底座 → 扣退货相关 → 扣扣点税 → 扣广告
   // 由单笔毛利反推底座，自动兼容 feeStackMode（settings_only 不扣账务 tech 等）
   const profitOpsBase = orderProfits.reduce((s, o) => {
@@ -499,6 +519,17 @@ export function buildOperatingReport(
   // 汇总始终扣总广告：订单已摊 + 未摊到单的部分（none/无商品ID/未匹配推广）
   const profitAfterOrders = orderProfits.reduce((s, o) => s + o.estimatedProfitAfterAd, 0);
   const unallocatedAd = Math.max(0, adSpend - adAllocatedTotal);
+  let adMatchWarning = "";
+  if (adSpendProduct > 0 && adProductIdCount > 0 && adIdIntersection === 0) {
+    adMatchWarning =
+      "商品推广与订单的商品ID交集为0：明细无法按商品分摊，汇总仍全额扣广告。请确认推广表与订单为同一店铺/同期，且商品ID一致（禁止品名兜底）。";
+  } else if (adSpendProduct > 0 && adProductIdCount > 0 && adIdIntersection > 0 && unallocatedAd > adSpend * 0.5) {
+    adMatchWarning =
+      "超过一半广告花费未能摊到订单明细（商品ID未匹配或订单全额退/已取消）。汇总毛利仍扣总广告。";
+  } else if (adSpend > 0 && adAllocatedTotal <= 0.001 && (settings.adAllocateMode || "by_product") === "by_product") {
+    adMatchWarning =
+      "当前按商品ID分摊，但明细分摊为0；汇总毛利已全额扣除广告花费。";
+  }
   let profitAfter = profitAfterOrders - unallocatedAd;
   const profitMargin = merchantReceived > 0 ? profitAfter / merchantReceived : 0;
 
@@ -572,6 +603,8 @@ export function buildOperatingReport(
   const costUnmatchedOrders = orderProfits.length - costMatchedOrders;
   const summary: OperatingSummary = {
     orderCount: orders.length,
+    cancelledOrderCount,
+    unknownRefundCount,
     goodsTotal,
     merchantReceived,
     confirmedRevenue,
@@ -628,12 +661,19 @@ export function buildOperatingReport(
     billIncome: totals.income,
     billRefund: totals.refund,
     techFee: totals.techFee,
+    techFeeAttributed,
     otherFee: totals.otherFee,
+    otherFeeAttributed,
     subsidy: totals.subsidy,
     billNet: totals.net,
     billAdExpenseExcluded: totals.adExpense || 0,
     billWithdrawExcluded: totals.withdraw || 0,
     adSpend,
+    adProductIdCount,
+    adOrderProductIdCount,
+    adIdIntersection,
+    adUnallocated: unallocatedAd,
+    adMatchWarning,
     adGmv,
     adNetGmv,
     adSettledGmv,
@@ -698,7 +738,7 @@ export function buildOperatingReport(
       o.billIncome.toFixed(2), o.billRefund.toFixed(2), o.techFee.toFixed(2),
       o.otherFee.toFixed(2), o.subsidy.toFixed(2),
       o.isShipped ? "是" : "否", o.isRefunded ? "是" : "否",
-      o.refundKind === "full" ? "全额退" : o.refundKind === "partial" ? "部分退" : o.refundKind === "none" ? "-" : "未知",
+      o.refundKind === "full" ? "全额退" : o.refundKind === "partial" ? "部分退" : o.refundKind === "none" ? (/已取消/.test(String(o.status || "")) ? "已取消" : "-") : o.refundKind === "unknown" ? "待账务" : "未知",
       o.refundAmount.toFixed(2),
       (o.refundRatio * 100).toFixed(1) + "%",
       (o.residualRatio * 100).toFixed(1) + "%",
@@ -712,6 +752,7 @@ export function buildOperatingReport(
   const summaryTable: any[][] = [
     ["指标", "数值"],
     ["订单数", summary.orderCount],
+    ["已取消订单数", summary.cancelledOrderCount ?? 0],
     ["商品总价合计", summary.goodsTotal.toFixed(2)],
     ["用户实付合计", summary.buyerPaid.toFixed(2)],
     ["商家实收合计", summary.merchantReceived.toFixed(2)],
@@ -728,6 +769,7 @@ export function buildOperatingReport(
     ["退款订单商品总价", summary.refundOrderAmount.toFixed(2)],
     ["全额退款订单数", summary.fullRefundCount],
     ["部分退款订单数", summary.partialRefundCount],
+    ["待账务退款订单数", summary.unknownRefundCount ?? 0],
     ["实退金额合计(账务优先/可推断)", summary.refundCashTotal.toFixed(2)],
     ["部分退保留确认收入", summary.partialRefundResidualRevenue.toFixed(2)],
     ["退款单(实退-商家实收)差额合计", summary.refundVsReceivedGapTotal.toFixed(2)],
@@ -772,8 +814,10 @@ export function buildOperatingReport(
     ["成本未匹配订单", summary.costUnmatchedOrders],
     ["账单交易收入", summary.billIncome.toFixed(2)],
     ["账单退款", summary.billRefund.toFixed(2)],
-    ["技术服务费(净)", summary.techFee.toFixed(2)],
-    ["其他费用", summary.otherFee.toFixed(2)],
+    ["账务技术服务费合计(净)", summary.techFee.toFixed(2)],
+    ["进毛利·技术服务费(订单归因)", (summary.techFeeAttributed ?? 0).toFixed(2)],
+    ["账务其他费用合计", summary.otherFee.toFixed(2)],
+    ["进毛利·其他费用(订单归因)", (summary.otherFeeAttributed ?? 0).toFixed(2)],
     ["补贴", summary.subsidy.toFixed(2)],
     ["广告花费(商品推广优先,否则分天合计)", summary.adSpend.toFixed(2)],
     ["广告交易额(推广日报)", summary.adGmv.toFixed(2)],
@@ -781,6 +825,11 @@ export function buildOperatingReport(
     ["账务推广费(已排除不扣毛利)", summary.billAdExpenseExcluded.toFixed(2)],
     ["提现(资金划出已排除)", summary.billWithdrawExcluded.toFixed(2)],
     ["广告分摊合计", summary.adAllocatedTotal.toFixed(2)],
+    ["广告未摊到明细", (summary.adUnallocated ?? 0).toFixed(2)],
+    ["推广商品ID数", summary.adProductIdCount ?? 0],
+    ["订单商品ID数", summary.adOrderProductIdCount ?? 0],
+    ["广告商品ID交集", summary.adIdIntersection ?? 0],
+    ["广告匹配提示", summary.adMatchWarning || "-"],
     ["广告分摊方式", settings.adAllocateMode || "by_product"],
     ["毛利(未扣广告)", summary.estimatedProfitBeforeAd.toFixed(2)],
     ["毛利(扣广告)", summary.estimatedProfitAfterAd.toFixed(2)],

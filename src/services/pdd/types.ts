@@ -352,6 +352,8 @@ export interface MonthMetrics {
 
 export interface OperatingSummary {
   orderCount: number;
+  /** 已取消订单数（不计确认收入） */
+  cancelledOrderCount: number;
   goodsTotal: number;
   merchantReceived: number;
   /** 确认收入合计（部分退后的有效收入） */
@@ -361,6 +363,8 @@ export interface OperatingSummary {
   refundOrderAmount: number;
   fullRefundCount: number;
   partialRefundCount: number;
+  /** 状态退款但账务未见退款，暂留收入 */
+  unknownRefundCount: number;
   refundCashTotal: number;
   partialRefundResidualRevenue: number;
   refundVsReceivedGapTotal: number;
@@ -427,8 +431,14 @@ export interface OperatingSummary {
   costUnmatchedAmount: number;
   billIncome: number;
   billRefund: number;
+  /** 账务技术服务费合计(净)，展示用 */
   techFee: number;
+  /** 已挂到订单、实际进毛利的技术服务费 */
+  techFeeAttributed: number;
+  /** 账务其他费用合计，展示用 */
   otherFee: number;
+  /** 已挂到订单、实际进毛利的其他费用 */
+  otherFeeAttributed: number;
   subsidy: number;
   billNet: number;
   /** 账务里出现的推广费（已排除，不扣毛利） */
@@ -437,6 +447,16 @@ export interface OperatingSummary {
   billWithdrawExcluded: number;
   /** 仅推广日报按日相加 */
   adSpend: number;
+  /** 商品推广表商品ID数 */
+  adProductIdCount: number;
+  /** 订单侧有商品ID的去重数 */
+  adOrderProductIdCount: number;
+  /** 订单商品ID ∩ 推广商品ID */
+  adIdIntersection: number;
+  /** 推广花费中未能按商品ID摊到订单的部分 */
+  adUnallocated: number;
+  /** 广告匹配告警文案（空=正常） */
+  adMatchWarning: string;
   adGmv: number;
   adNetGmv: number;
   adSettledGmv: number;

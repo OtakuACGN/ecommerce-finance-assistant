@@ -22,6 +22,37 @@ export default function OperatingDashboard({
 
   return (
     <>
+              {(opReport.summary.adMatchWarning ||
+                (opReport.summary.cancelledOrderCount || 0) > 0 ||
+                (opReport.summary.unknownRefundCount || 0) > 0 ||
+                (opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0) > 1) && (
+                <div className="space-y-2 mb-4">
+                  {opReport.summary.adMatchWarning ? (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 leading-relaxed">
+                      <span className="font-semibold">广告匹配告警：</span>
+                      {opReport.summary.adMatchWarning}
+                    </div>
+                  ) : null}
+                  {(opReport.summary.cancelledOrderCount || 0) > 0 ? (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                      已取消订单 <b>{opReport.summary.cancelledOrderCount}</b> 单已排除，不计入确认收入。
+                    </div>
+                  ) : null}
+                  {(opReport.summary.unknownRefundCount || 0) > 0 ? (
+                    <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800">
+                      待账务退款 <b>{opReport.summary.unknownRefundCount}</b> 单：状态退款成功但账务未见退款，暂按残留收入计，明细标「待账务」。
+                    </div>
+                  ) : null}
+                  {(opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0) > 1 ? (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 leading-relaxed">
+                      平台费口径：账务技术服务费合计 ¥{(opReport.summary.techFee || 0).toFixed(2)}，
+                      已挂到订单进毛利 ¥{(opReport.summary.techFeeAttributed || 0).toFixed(2)}
+                      （差额 ¥{(((opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0))).toFixed(2)} 未归因，毛利只扣已归因部分）。
+                      其他费用：账务 ¥{(opReport.summary.otherFee || 0).toFixed(2)} / 进毛利 ¥{(opReport.summary.otherFeeAttributed || 0).toFixed(2)}。
+                    </div>
+                  ) : null}
+                </div>
+              )}
               {/* 成本匹配进度：引导补资料 */}
               <div
                 className={`mb-4 rounded-xl border p-3 ${
@@ -233,15 +264,21 @@ export default function OperatingDashboard({
                     （=退货退款主口径）
                   </div>
                 </div>
-                <div className="bg-red-50 rounded-xl p-3 min-h-[88px] border border-red-100">
-                  <div className="text-xs text-red-700/80">广告花费（已从毛利扣除）</div>
-                  <div className="text-lg font-bold text-red-600">
+                <div className={`rounded-xl p-3 min-h-[88px] border ${opReport.summary.adMatchWarning ? "bg-amber-50 border-amber-300" : "bg-red-50 border-red-100"}`}>
+                  <div className={`text-xs ${opReport.summary.adMatchWarning ? "text-amber-800" : "text-red-700/80"}`}>广告花费（已从毛利扣除）</div>
+                  <div className={`text-lg font-bold ${opReport.summary.adMatchWarning ? "text-amber-700" : "text-red-600"}`}>
                     -¥{opReport.summary.adSpend.toFixed(2)}
                   </div>
                   <div className="text-[11px] text-slate-600 mt-0.5 leading-snug">
                     {opReport.summary.adAllocatedTotal > 0.001
-                      ? `其中明细已摊 ¥${opReport.summary.adAllocatedTotal.toFixed(2)}，其余在汇总扣完`
+                      ? `明细已摊 ¥${opReport.summary.adAllocatedTotal.toFixed(2)}，未摊 ¥${(opReport.summary.adUnallocated ?? Math.max(0, opReport.summary.adSpend - opReport.summary.adAllocatedTotal)).toFixed(2)}`
                       : "当前未摊到订单明细，但汇总毛利已全额扣减这笔广告"}
+                    {typeof opReport.summary.adIdIntersection === "number" && opReport.summary.adSpend > 0 ? (
+                      <span className="block mt-0.5">
+                        商品ID匹配 {opReport.summary.adIdIntersection}/{opReport.summary.adProductIdCount || 0}
+                        （订单侧ID {opReport.summary.adOrderProductIdCount || 0}）
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3">
