@@ -100,7 +100,7 @@ export function buildOperatingReport(
     const shop = normalizeShopName(o.shopName);
     const rk = refundPre[i];
     let allocBase = 0;
-    if (rk.refundKind === "full") {
+    if (/已取消/.test(String(o.status || "")) || rk.refundKind === "full") {
       allocBase = 0;
     } else if (rk.refundKind === "partial") {
       const base = o.goodsTotal > 0 ? o.goodsTotal : Math.max(0, o.merchantReceived);

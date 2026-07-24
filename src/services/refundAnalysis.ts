@@ -55,6 +55,22 @@ export function analyzeOrderRefund(
   // 基准：优先账务收入/商品总价/实收，禁止用「实收+退款」叠高（会把全额退打成 50% 部分退）
   const baseAmount = Math.max(billIncome, gt, mr);
 
+  // 已取消：未成交，订单实收字段常仍有原价，不得计入确认收入
+  if (/已取消/.test(status)) {
+    return {
+      refundKind: "none",
+      baseAmount,
+      billRefund,
+      billResidual,
+      merchantReceived: mr,
+      refundAmount: billRefund,
+      refundRatio: 0,
+      residualRatio: 0,
+      revenue: 0,
+      compareNote: "已取消：不计入确认收入（忽略订单实收字段）",
+    };
+  }
+
   if (!isRef) {
     const revenue = mr > 0 ? mr : hasBillMoney ? billResidual : 0;
     return {

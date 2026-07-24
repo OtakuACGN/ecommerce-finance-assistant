@@ -86,6 +86,12 @@ async function main() {
       partial.refundKind === "partial" && Math.abs(partial.revenue - 54) < 0.01 && Math.abs(partial.refundAmount - 15) < 0.01,
       JSON.stringify(partial),
     );
+    const cancelled = analyzeOrderRefund(
+      { merchantReceived: 89, goodsTotal: 89, status: "已取消", afterSale: "" },
+      null,
+      false,
+    );
+    ok("refund.cancelled_zero", cancelled.revenue === 0 && cancelled.residualRatio === 0, JSON.stringify(cancelled));
   }
 
 const pdd = await load("src/services/pddBusiness.ts");
