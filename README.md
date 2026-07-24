@@ -4,13 +4,13 @@
 
 **仓库：** https://github.com/OtakuACGN/ecommerce-finance-assistant
 
-**当前版本：** 1.2.4
+**当前版本：** 1.2.6
 
 ## 便携版（推荐）
 
-1. 本机构建产物：`release/DianCaiTong-Portable-1.2.4.zip` / `release/win-unpacked/`
+1. 本机构建产物：`release/DianCaiTong-Portable-1.2.6.zip` / `release/win-unpacked/`
 2. 解压后双击 **店财通.exe**（无需安装）
-3. 安装包：`release/DianCaiTong-Setup-1.2.4.exe`
+3. 安装包：`release/DianCaiTong-Setup-1.2.6.exe`
 
 也可源码目录双击 `start-app.bat`（需已执行过 `npm run build:dir`）。
 
@@ -20,6 +20,7 @@
 - **四表**：订单导出 / 账务明细 / 商品资料 / 推广分天
 - **拖入多文件自动识别**类型并分流
 - **毛利**：确认收入 − 成本 − 包材 − 净运费 − 平台费 − 退货损耗 − 二次包装 − 品牌扣点 − 电商税 − 广告
+- **退款口径**：部分仅退款只扣退款额、商品成本全额且不进货损；全额退收入≈0；发货后全额退默认货损比例 0（可参数自定义）
 - **品牌扣点**可空可填，与平台扣点分离
 - **扣点/税**：全局百分比 + **按店铺覆盖**
 - **直通车**：按商品 ID 精确匹配，无 ID 不品名兜底；链接内 SKU 按成交拆分花费
@@ -66,7 +67,7 @@ npm run build
 便携 zip 示例：
 
 ```powershell
-Compress-Archive -Path release\win-unpacked\* -DestinationPath release\DianCaiTong-Portable-1.2.4.zip -Force
+Compress-Archive -Path release\win-unpacked\* -DestinationPath release\DianCaiTong-Portable-1.2.6.zip -Force
 ```
 
 ## 技术栈
