@@ -1,6 +1,6 @@
 {
   "name": "diancaitong",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "type": "module",
   "description": "店财通 - 电商经营财务助手（拼多多经营分析 / 毛利 / 对账）",
   "main": "dist-electron/main.cjs",

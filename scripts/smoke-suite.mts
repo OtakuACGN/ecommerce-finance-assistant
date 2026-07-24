@@ -60,7 +60,35 @@ async function main() {
   const emptyN = ar.rows.filter((r: any) => r.descClusterKey === "empty" || r.descClusterLabel === "无有效描述").length;
   ok("after.emptyDesc", emptyN >= 1, String(emptyN));
 
-  const pdd = await load("src/services/pddBusiness.ts");
+  
+  // refund classification: full vs partial
+  {
+    const { analyzeOrderRefund } = await load("src/services/refundAnalysis.ts");
+    const fullUnship = analyzeOrderRefund(
+      { merchantReceived: 89, goodsTotal: 89, status: "未发货，退款成功", afterSale: "退款成功" },
+      { income: 89, refund: 89, subsidy: 0 },
+      true,
+    );
+    ok("refund.unshipped_full", fullUnship.refundKind === "full" && fullUnship.revenue === 0, JSON.stringify(fullUnship));
+    const fullBill = analyzeOrderRefund(
+      { merchantReceived: 156.42, goodsTotal: 158, status: "已收货，退款成功", afterSale: "退款成功" },
+      { income: 156.42, refund: 156.42, subsidy: 0 },
+      true,
+    );
+    ok("refund.bill_full_no_mr_fallback", fullBill.refundKind === "full" && Math.abs(fullBill.revenue) < 0.01, JSON.stringify(fullBill));
+    const partial = analyzeOrderRefund(
+      { merchantReceived: 69, goodsTotal: 69, status: "已收货，退款成功", afterSale: "退款成功" },
+      { income: 69, refund: 15, subsidy: 0 },
+      true,
+    );
+    ok(
+      "refund.true_partial",
+      partial.refundKind === "partial" && Math.abs(partial.revenue - 54) < 0.01 && Math.abs(partial.refundAmount - 15) < 0.01,
+      JSON.stringify(partial),
+    );
+  }
+
+const pdd = await load("src/services/pddBusiness.ts");
   const orders = [{
     orderId: "A1", productName: "item", status: "已发货", afterSale: "", qty: 1,
     goodsTotal: 50, buyerPaid: 50, merchantReceived: 48, platformDiscount: 0, shopDiscount: 0,
