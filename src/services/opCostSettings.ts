@@ -56,11 +56,12 @@ export function normalizeCostSettings(parsed: Partial<CostSettings> | null | und
     ...parsed,
     expressRules: rules,
     adAllocateMode:
+      parsed.adAllocateMode === "by_product" ||
       parsed.adAllocateMode === "by_order_count" ||
       parsed.adAllocateMode === "none" ||
       parsed.adAllocateMode === "by_gmv"
         ? parsed.adAllocateMode
-        : "by_gmv",
+        : "by_product",
     matchBySpecWhenNoCode: parsed.matchBySpecWhenNoCode !== false,
     anomalyHighRefundRate: Math.min(
       1,

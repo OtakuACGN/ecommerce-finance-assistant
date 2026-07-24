@@ -228,10 +228,11 @@ export default function OperatingSettingsPanel({
                     }))
                   }
                   className="border rounded-lg px-2 py-1 bg-white"
-                  title="商品/规格销售排行不做广告均摊；默认仅在整体汇总扣总花费"
+                  title="优先按商品推广的商品ID分摊到订单；无商品推广时仅汇总扣总广告"
                 >
-                  <option value="none">不均摊(推荐·仅汇总扣总广告)</option>
-                  <option value="by_gmv">强制按成交额摊到单(不推荐)</option>
+                  <option value="by_product">按商品ID分摊(推荐·有商品推广时)</option>
+                  <option value="none">不摊到单(仅汇总扣总广告)</option>
+                  <option value="by_gmv">强制按全店成交额均摊(不推荐)</option>
                   <option value="by_order_count">强制按订单数均摊(不推荐)</option>
                 </select>
               </label>

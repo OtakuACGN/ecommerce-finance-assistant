@@ -1812,10 +1812,12 @@ const {
                           </div>
                         </div>
                         <div className="text-xs text-orange-900 bg-white/70 border border-orange-100 rounded-lg px-2.5 py-1">
-                          扣广告毛利 ¥
+                          已扣广告毛利 ¥
                           {opReport.summary.estimatedProfitAfterAd.toFixed(0)}
-                          {" · "}
-                          分摊 ¥{opReport.summary.adAllocatedTotal.toFixed(0)}
+                          {" · 花费 ¥"}
+                          {opReport.summary.adSpend.toFixed(0)}
+                          {" · 明细分摊 ¥"}
+                          {opReport.summary.adAllocatedTotal.toFixed(0)}
                         </div>
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">

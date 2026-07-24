@@ -72,19 +72,17 @@ export function buildOperatingReport(
       ? adProducts.reduce((s, a) => s + (a.settledGmv || 0), 0)
       : adDays.reduce((s, d) => s + (d.settledGmv || 0), 0);
   const adByProductId = new Map<string, number>();
-  const adByProductName = new Map<string, number>();
   for (const a of adProducts) {
     const id = String(a.productId || "").trim().replace(/\.0$/, "");
-    const nm = String(a.productName || "").trim();
-    if (id) adByProductId.set(id, (adByProductId.get(id) || 0) + (a.spend || 0));
-    if (nm) adByProductName.set(nm, (adByProductName.get(nm) || 0) + (a.spend || 0));
+    if (!id) continue; // 无商品ID不匹配（禁止品名兜底）
+    adByProductId.set(id, (adByProductId.get(id) || 0) + (a.spend || 0));
   }
-  const lookupProductAd = (productId: string, productName: string) => {
-    const id = String(productId || "").trim().replace(/\.0$/, "");
-    if (id && adByProductId.has(id)) return adByProductId.get(id) || 0;
-    const nm = String(productName || "").trim();
-    if (nm && adByProductName.has(nm)) return adByProductName.get(nm) || 0;
-    return 0;
+  const normProductId = (raw: string) => String(raw || "").trim().replace(/\.0$/, "");
+  /** 仅商品ID精确匹配推广花费（排行/挂表用） */
+  const lookupProductAd = (productId: string) => {
+    const id = normProductId(productId);
+    if (!id) return 0;
+    return adByProductId.get(id) || 0;
   };
 
   // 广告按店铺分摊（多店对比时各店互不串）
@@ -132,6 +130,15 @@ export function buildOperatingReport(
     1,
     orderMeta.filter((m) => m.refundKind !== "full").length,
   );
+  // 商品ID维度成交基数：用于把该商品推广花费摊到同商品订单（非全店均摊）
+  const productAllocBase = new Map<string, number>();
+  for (let i = 0; i < orders.length; i++) {
+    const m = orderMeta[i];
+    if (!m || m.refundKind === "full") continue;
+    const pid = normProductId(orders[i].productId || "");
+    if (!pid) continue;
+    productAllocBase.set(pid, (productAllocBase.get(pid) || 0) + m.allocBase);
+  }
   // 若广告未打店铺标签且仅有默认店铺花费，则仍按全局分摊（兼容单店）
   const adShops = Array.from(adSpendByShop.keys());
   const useGlobalAd =
@@ -228,25 +235,38 @@ export function buildOperatingReport(
     // 展示用：已发货未成交的净运费（主毛利只扣 netShipping，不再重复扣 shippingLoss）
     const shippingLoss = shipNotDeal ? netShipping : 0;
 
-    // 推广费分摊：全额退不计广告；部分退按保留占比基数；多店优先本店日报
+    // 推广费分摊：
+    // - by_product：有商品推广时按商品ID分到该商品订单（非全店均摊；无ID=0）
+    // - by_gmv / by_order_count：强制全店均摊（不推荐）
+    // - none：订单明细分摊=0，汇总仍扣总广告
     const shopName = normalizeShopName(o.shopName);
     let adAllocated = 0;
     const metaAlloc = orderMeta[idx]?.allocBase ?? 0;
-    if (settings.adAllocateMode !== "none" && refundKind !== "full") {
-      if (useGlobalAd) {
-        if (settings.adAllocateMode === "by_gmv" && totalAllocBase > 0 && adSpend > 0) {
-          adAllocated = (metaAlloc / totalAllocBase) * adSpend;
-        } else if (settings.adAllocateMode === "by_order_count" && adSpend > 0) {
-          adAllocated = adSpend / orderCountForAd;
+    const mode = settings.adAllocateMode || "by_product";
+    if (refundKind !== "full") {
+      if (mode === "by_product") {
+        const pid = normProductId(o.productId || "");
+        const productSpend = pid ? adByProductId.get(pid) || 0 : 0;
+        const base = pid ? productAllocBase.get(pid) || 0 : 0;
+        if (productSpend > 0 && base > 0 && metaAlloc > 0) {
+          adAllocated = (metaAlloc / base) * productSpend;
         }
-      } else {
-        const shopSpend = adSpendByShop.get(shopName) || 0;
-        if (settings.adAllocateMode === "by_gmv") {
-          const base = allocBaseByShop.get(shopName) || 0;
-          if (base > 0 && shopSpend > 0) adAllocated = (metaAlloc / base) * shopSpend;
-        } else if (settings.adAllocateMode === "by_order_count") {
-          const cnt = orderCountByShop.get(shopName) || 1;
-          if (shopSpend > 0) adAllocated = shopSpend / cnt;
+      } else if (mode !== "none") {
+        if (useGlobalAd) {
+          if (mode === "by_gmv" && totalAllocBase > 0 && adSpend > 0) {
+            adAllocated = (metaAlloc / totalAllocBase) * adSpend;
+          } else if (mode === "by_order_count" && adSpend > 0) {
+            adAllocated = adSpend / orderCountForAd;
+          }
+        } else {
+          const shopSpend = adSpendByShop.get(shopName) || 0;
+          if (mode === "by_gmv") {
+            const base = allocBaseByShop.get(shopName) || 0;
+            if (base > 0 && shopSpend > 0) adAllocated = (metaAlloc / base) * shopSpend;
+          } else if (mode === "by_order_count") {
+            const cnt = orderCountByShop.get(shopName) || 1;
+            if (shopSpend > 0) adAllocated = shopSpend / cnt;
+          }
         }
       }
     }
@@ -467,7 +487,7 @@ export function buildOperatingReport(
     returnRelatedCost +
     brandPointTotal +
     ecommerceTaxTotal +
-    (settings.adAllocateMode === "none" ? adSpend : adAllocatedTotal);
+    adSpend;
   const costMatchedOrders = orderProfits.filter((o) => o.costMatched).length;
   const costUnmatchedAmount = orderProfits
     .filter((o) => !o.costMatched)
@@ -475,11 +495,10 @@ export function buildOperatingReport(
 
   let profitBefore = orderProfits.reduce((s, o) => s + o.estimatedProfit, 0);
   if (orders.length === 0 && billLines.length > 0) profitBefore = totals.net;
-  // 若 ad 未分摊到单，summary 仍扣总广告
-  let profitAfter = orderProfits.reduce((s, o) => s + o.estimatedProfitAfterAd, 0);
-  if (settings.adAllocateMode === "none") {
-    profitAfter = profitBefore - adSpend;
-  }
+  // 汇总始终扣总广告：订单已摊 + 未摊到单的部分（none/无商品ID/未匹配推广）
+  const profitAfterOrders = orderProfits.reduce((s, o) => s + o.estimatedProfitAfterAd, 0);
+  const unallocatedAd = Math.max(0, adSpend - adAllocatedTotal);
+  let profitAfter = profitAfterOrders - unallocatedAd;
   const profitMargin = merchantReceived > 0 ? profitAfter / merchantReceived : 0;
 
   // 按月汇总 + 时段对比
@@ -736,7 +755,7 @@ export function buildOperatingReport(
     ["账务推广费(已排除不扣毛利)", summary.billAdExpenseExcluded.toFixed(2)],
     ["提现(资金划出已排除)", summary.billWithdrawExcluded.toFixed(2)],
     ["广告分摊合计", summary.adAllocatedTotal.toFixed(2)],
-    ["广告分摊方式", settings.adAllocateMode],
+    ["广告分摊方式", settings.adAllocateMode || "by_product"],
     ["毛利(未扣广告)", summary.estimatedProfitBeforeAd.toFixed(2)],
     ["毛利(扣广告)", summary.estimatedProfitAfterAd.toFixed(2)],
     ["毛利率", pct(summary.profitMargin)],
@@ -1299,8 +1318,8 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
   // 商品推广：按商品ID挂到 SPU/商品维度（整商品一次，不做订单均摊）
   const attachProductAd = (map: Map<string, RankAgg>) => {
     for (const a of map.values()) {
-      // 整商品一次：按商品ID（或品名）匹配推广汇总花费，不按订单均摊
-      a.productAdSpend = lookupProductAd(a.productId, a.productName);
+      // 整商品一次：仅按商品ID匹配推广汇总花费（无ID=0）
+      a.productAdSpend = lookupProductAd(a.productId);
     }
   };
   attachProductAd(spuMap);

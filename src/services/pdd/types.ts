@@ -136,7 +136,7 @@ export interface CostSettings {
   /** 订单邮费抵扣运费 */
   usePostageIncome: boolean;
   /** 推广费分摊方式 */
-  adAllocateMode: "by_gmv" | "by_order_count" | "none";
+  adAllocateMode: "by_product" | "by_gmv" | "by_order_count" | "none";
   /**
    * 品牌扣点 %（如 5 表示 5%）
    * 按 feeBaseMode 基数计提，从毛利扣减
@@ -199,7 +199,7 @@ export const DEFAULT_COST_SETTINGS: CostSettings = {
   returnRestockRate: 0.1,
   returnRepackCost: 0.5,
   usePostageIncome: true,
-  adAllocateMode: "none", // 广告不均摊到单/商品；整体可在汇总扣总花费
+  adAllocateMode: "by_product", // 有商品推广时按商品ID摊到单；无则仅汇总扣总广告
   brandPointPct: 0,
   ecommerceTaxPct: 0,
   feeBaseMode: "revenue",

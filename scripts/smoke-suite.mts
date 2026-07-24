@@ -73,6 +73,26 @@ async function main() {
   const imp = pdd.productMasterImportTable(rows);
   ok("productMaster.table", Array.isArray(imp) && imp.length >= 2);
 
+  // ad by_product: product-level spend allocated within same productId only
+  {
+    const orders2 = [
+      { ...orders[0], orderId: "B1", productId: "111", goodsTotal: 100, merchantReceived: 100, qty: 1 },
+      { ...orders[0], orderId: "B2", productId: "111", goodsTotal: 100, merchantReceived: 100, qty: 1 },
+      { ...orders[0], orderId: "B3", productId: "222", goodsTotal: 100, merchantReceived: 100, qty: 1 },
+    ];
+    const adProducts = [
+      { productId: "111", productName: "p1", spend: 20, gmv: 200, netGmv: 0, settledGmv: 0, orders: 2, roi: 10, netRoi: 0, settledRoi: 0 },
+      { productId: "222", productName: "p2", spend: 10, gmv: 100, netGmv: 0, settledGmv: 0, orders: 1, roi: 10, netRoi: 0, settledRoi: 0 },
+    ];
+    const settings = { ...(pdd.DEFAULT_COST_SETTINGS || {}), adAllocateMode: "by_product" };
+    const report = pdd.buildOperatingReport(orders2, [], [], [], settings, adProducts);
+    const byId = Object.fromEntries(report.orderProfits.map((o: any) => [o.orderId, o.adAllocated]));
+    ok("ad.by_product.B1", Math.abs((byId.B1 || 0) - 10) < 0.01, String(byId.B1));
+    ok("ad.by_product.B2", Math.abs((byId.B2 || 0) - 10) < 0.01, String(byId.B2));
+    ok("ad.by_product.B3", Math.abs((byId.B3 || 0) - 10) < 0.01, String(byId.B3));
+    ok("ad.summary.deductsAll", Math.abs(report.summary.estimatedProfitBeforeAd - report.summary.estimatedProfitAfterAd - 30) < 0.5, String(report.summary.estimatedProfitAfterAd));
+  }
+
   // empty/header-only workbook must not be blank
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["(空表)"]]), "空表");

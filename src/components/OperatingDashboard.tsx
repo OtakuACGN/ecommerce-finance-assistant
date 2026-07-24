@@ -232,24 +232,30 @@ export default function OperatingDashboard({
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 min-h-[88px]">
-                  <div className="text-xs text-gray-500">广告花费(日报) / 已分摊</div>
+                  <div className="text-xs text-gray-500">广告花费（汇总已扣）</div>
                   <div className="text-sm font-bold text-red-600">
                     ¥{opReport.summary.adSpend.toFixed(2)}
                   </div>
                   <div className="text-[11px] text-gray-500 mt-0.5">
-                    分摊 ¥{opReport.summary.adAllocatedTotal.toFixed(2)}
+                    明细分摊 ¥{opReport.summary.adAllocatedTotal.toFixed(2)}
+                    {opReport.summary.adAllocatedTotal <= 0.001 && opReport.summary.adSpend > 0
+                      ? " · 仅汇总扣（导入商品推广可按ID摊到单）"
+                      : " · 已摊到订单"}
                   </div>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500">毛利(扣成本包材净运费等)</div>
+                  <div className="text-xs text-gray-500">毛利(未扣广告)</div>
                   <div className="text-lg font-bold text-emerald-700">
                     ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(2)}
                   </div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500">毛利(再扣广告)</div>
+                  <div className="text-xs text-gray-500">毛利(已扣广告)</div>
                   <div className="text-lg font-bold text-green-700">
                     ¥{opReport.summary.estimatedProfitAfterAd.toFixed(2)}
+                  </div>
+                  <div className="text-[11px] text-gray-500 mt-0.5">
+                    = 未扣广告 − 广告花费
                   </div>
                 </div>
                 <div className="bg-blue-50 rounded-lg p-3">
@@ -542,8 +548,7 @@ export default function OperatingDashboard({
                       ¥{opReport.summary.estimatedProfitAfterAd.toFixed(0)}
                     </div>
                     <div className="text-[10px] text-emerald-100/70 mt-0.5">
-                      毛利率{" "}
-                      {(opReport.summary.profitMargin * 100).toFixed(1)}% · 未扣广告
+                      毛利率 {(opReport.summary.profitMargin * 100).toFixed(1)}% · 扣前
                       ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(0)}
                     </div>
                   </div>
