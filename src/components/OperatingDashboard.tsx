@@ -77,12 +77,12 @@ export default function OperatingDashboard({
                   </div>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500">确认收入（含部分退保留）</div>
+                  <div className="text-xs text-gray-500">确认收入（毛利基数）</div>
                   <div className="text-lg font-bold text-emerald-700">
                     ¥{(opReport.summary.confirmedRevenue ?? opReport.summary.merchantReceived).toFixed(2)}
                   </div>
-                  <div className="text-[11px] text-gray-500 mt-0.5">
-                    部分退后有效收入 · 毛利基数优先用此
+                  <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">
+                    部分退只扣退款额，保留部分仍计入
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-3">
@@ -181,8 +181,10 @@ export default function OperatingDashboard({
                   </div>
                   <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed break-words">
                     实退 ¥{(opReport.summary.refundCashTotal ?? 0).toFixed(2)}
-                    · 部分退保留收入 ¥
+                    · 部分退保留 ¥
                     {(opReport.summary.partialRefundResidualRevenue ?? 0).toFixed(2)}
+                    <br />
+                    口径：只扣退款金额，不整单作废
                   </div>
                 </div>
                 <div

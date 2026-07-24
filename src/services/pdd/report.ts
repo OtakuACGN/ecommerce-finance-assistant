@@ -192,6 +192,7 @@ export function buildOperatingReport(
       else if (shipped && !refunded) chargeProductCost = true;
       costTotal = chargeProductCost ? fullProductCost : 0;
     } else if (refundKind === "partial") {
+      // 部分退：收入只扣退款额（revenue=保留）；成本按保留比例计，退回部分可计损耗
       const keptCost = fullProductCost * residualRatio;
       const refundedCostBase = fullProductCost * refundRatio;
       if (settings.countProductCostOnRefundedShip) {
