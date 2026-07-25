@@ -63,6 +63,12 @@ export default function OperatingQuickBar({
           n: null as number | null,
           run: () => onOpenBrandPoint(),
         },
+        {
+          key: "restock",
+          label: `退货损耗 ${Math.round((opCostSettings.returnRestockRate || 0) * 100)}%`,
+          n: null as number | null,
+          run: () => onOpenBrandPoint(),
+        },
       ].map((b) => (
         <button
           key={b.key}
@@ -76,7 +82,7 @@ export default function OperatingQuickBar({
             opView === "orders" &&
             orderTableFilter === b.key
               ? "bg-blue-600 text-white border-blue-600"
-              : b.key === "brand"
+              : b.key === "brand" || b.key === "restock"
                 ? "bg-violet-50 text-violet-800 border-violet-200 hover:bg-violet-100"
                 : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
           }`}

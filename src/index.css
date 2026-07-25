@@ -126,7 +126,7 @@ body {
 }
 .data-table-hwrap--virtual {
   overflow-y: auto;
-  max-height: min(70vh, 640px);
+  max-height: min(75vh, 720px);
   /* Firefox：只保留纵向细条 */
   scrollbar-width: thin;
 }

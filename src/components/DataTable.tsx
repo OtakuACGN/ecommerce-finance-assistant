@@ -13,7 +13,7 @@ type SortDirection = "asc" | "desc" | null;
 
 const ROW_H = 40;
 const OVERSCAN = 10;
-const PAGE_SIZES = [25, 50, 100, 200, 500, 1000];
+const PAGE_SIZES = [25, 50, 100, 200, 500, 1000, 0]; // 0=全部(虚拟)
 
 /**
  * 阅读优先 + 性能：
@@ -188,15 +188,19 @@ export default function DataTable({
     });
   }, [bodyRows, displayHeaders]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedData.length / rowsPerPage));
-  const safePage = Math.min(currentPage, totalPages);
+  const showAll = !(rowsPerPage > 0);
+  const pageSize = showAll ? Math.max(sortedData.length, 1) : rowsPerPage;
+  const totalPages = showAll ? 1 : Math.max(1, Math.ceil(sortedData.length / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
   const paginatedData = useMemo(() => {
-    const start = (safePage - 1) * rowsPerPage;
-    return sortedData.slice(start, start + rowsPerPage);
-  }, [sortedData, safePage, rowsPerPage]);
+    if (showAll) return sortedData;
+    const start = (safePage - 1) * pageSize;
+    return sortedData.slice(start, start + pageSize);
+  }, [sortedData, safePage, pageSize, showAll]);
 
-  // 页内虚拟滚动：当前页 > 60 行时只渲染可视窗口
-  const useVirtual = !disableVirtual && paginatedData.length > 60;
+  // 页内虚拟滚动：>40 行或「全部」模式时只渲染可视窗口
+  const useVirtual =
+    !disableVirtual && (showAll ? sortedData.length > 40 : paginatedData.length > 40);
   const virtual = useMemo(() => {
     if (!useVirtual) {
       return {
@@ -459,7 +463,7 @@ export default function DataTable({
           className={`px-2 py-2 text-xs text-slate-400 whitespace-nowrap align-top sticky left-0 z-20 group-hover:bg-blue-50/80 ${rowTint}`}
           style={{ minWidth: COL_NUM_W, width: COL_NUM_W }}
         >
-          {(safePage - 1) * rowsPerPage + absoluteIndex + 1}
+          {(showAll ? 0 : (safePage - 1) * pageSize) + absoluteIndex + 1}
         </td>
         {displayHeaders.map((_, cellIndex) => {
           const cell = row?.[cellIndex];
@@ -601,7 +605,7 @@ export default function DataTable({
             <span className="text-slate-400"> · {displayHeaders.length} 列</span>
           )}
           <span className="text-slate-400 text-xs ml-2">
-            本页 {paginatedData.length} 行
+            {showAll ? "全部" : "本页"} {paginatedData.length} 行
             {useVirtual ? " · 虚拟滚动" : ""} · 前 {freezeN} 列冻结
           </span>
         </div>
@@ -611,14 +615,18 @@ export default function DataTable({
             <select
               value={rowsPerPage}
               onChange={(e) => {
-                setRowsPerPage(Number(e.target.value) || 100);
+                const n = Number(e.target.value);
+                setRowsPerPage(Number.isFinite(n) ? n : 100);
                 setCurrentPage(1);
+                setScrollTop(0);
+                if (vWrapRef.current) vWrapRef.current.scrollTop = 0;
               }}
               className="border rounded-lg px-1.5 py-1 bg-white text-xs"
+              title="大表建议 100/200；看全量用「全部(虚拟)」"
             >
               {PAGE_SIZES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
+                <option key={String(n)} value={n}>
+                  {n === 0 ? "全部(虚拟)" : n}
                 </option>
               ))}
             </select>

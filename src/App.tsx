@@ -947,6 +947,28 @@ function App() {
         anomalyPartial: opReport.anomalyPartialRefundTable || [],
       };
       let table = tableMap[view] || opReport.summaryTable;
+      // 商品/待补视图：待填成本行置顶
+      if ((view === "products" || view === "unmatched") && table.length > 1) {
+        const header = table[0] || [];
+        const flagIdx = header.findIndex((h) => {
+          const s = String(h);
+          return s.includes("填写标记") || s.includes("成本匹配") || s === "有成本";
+        });
+        const costIdx = header.findIndex((h) => /成本/.test(String(h)));
+        const idx = flagIdx >= 0 ? flagIdx : costIdx;
+        if (idx >= 0) {
+          const body = table.slice(1).slice();
+          body.sort((ra, rb) => {
+            const sa = String(ra[idx] ?? "");
+            const sb = String(rb[idx] ?? "");
+            const pa = /待填|否|缺|未|0$/.test(sa) || Number(sa) === 0 ? 0 : 1;
+            const pb = /待填|否|缺|未|0$/.test(sb) || Number(sb) === 0 ? 0 : 1;
+            if (pa !== pb) return pa - pb;
+            return 0;
+          });
+          table = [header, ...body];
+        }
+      }
       if (view === "orders" && orderTableFilter !== "all") {
         table = filterOrderTable(opReport.orderTable, orderTableFilter);
       }
