@@ -30,7 +30,9 @@ export function buildAccrualTable(billRecords: BillRecord[]): any[][] {
     const today = new Date();
     const billDate = new Date(b.date);
     const isCrossPeriod =
-      !isNaN(billDate.getTime()) && billDate.getMonth() !== today.getMonth();
+      !isNaN(billDate.getTime()) &&
+      (billDate.getFullYear() !== today.getFullYear() ||
+        billDate.getMonth() !== today.getMonth());
     return [
       b.platform,
       b.date,

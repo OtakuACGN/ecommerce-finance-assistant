@@ -45,6 +45,8 @@ export interface PddBillLine {
   remark: string;
   bizDesc: string;
   shopName?: string;
+  /** 导入来源文件；用于同一文件重导时替换旧流水，避免重复记账 */
+  sourceName?: string;
 }
 
 export interface PddBillOrderAgg {
@@ -441,11 +443,11 @@ export interface OperatingSummary {
   billRefund: number;
   /** 账务技术服务费合计(净)，展示用 */
   techFee: number;
-  /** 已挂到订单、实际进毛利的技术服务费 */
+  /** 可归因到订单明细的技术服务费；自然月利润仍按账务合计扣减 */
   techFeeAttributed: number;
   /** 账务其他费用合计，展示用 */
   otherFee: number;
-  /** 已挂到订单、实际进毛利的其他费用 */
+  /** 可归因到订单明细的其他费用；自然月利润仍按账务合计扣减 */
   otherFeeAttributed: number;
   subsidy: number;
   billNet: number;

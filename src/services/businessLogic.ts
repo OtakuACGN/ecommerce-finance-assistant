@@ -275,22 +275,34 @@ export function applySkuMapping(
   skuMappings: SKUMapping[]
 ): any[][] {
   if (currentData.length === 0 || skuMappings.length === 0) return currentData;
-  const headers = currentData[0];
+  const headers = currentData[0] || [];
   const dataRows = currentData.slice(1);
+  const internalCodeIdx = headers.findIndex(
+    (h) => String(h ?? "").trim() === "内部编码",
+  );
 
   const mappedRows = dataRows.map((row) => {
     const newRow = [...row];
+    let internalCode = internalCodeIdx >= 0
+      ? String(newRow[internalCodeIdx] ?? "").trim()
+      : "";
     for (let i = 0; i < newRow.length; i++) {
       const cell = String(newRow[i] || "").trim();
       const mapping = skuMappings.find((m) => m.platformName === cell);
-      if (mapping && !newRow.includes(mapping.internalCode)) {
-        newRow.push(mapping.internalCode);
+      if (mapping) {
+        internalCode = mapping.internalCode;
+        break;
       }
     }
+    if (internalCodeIdx >= 0) newRow[internalCodeIdx] = internalCode;
+    else newRow.push(internalCode);
     return newRow;
   });
 
-  return [[...headers, "内部编码"], ...mappedRows];
+  return [
+    internalCodeIdx >= 0 ? [...headers] : [...headers, "内部编码"],
+    ...mappedRows,
+  ];
 }
 
 export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
@@ -320,7 +332,9 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
     const today = new Date();
     const billDate = new Date(b.date);
     const isCrossPeriod =
-      !isNaN(billDate.getTime()) && billDate.getMonth() !== today.getMonth();
+      !isNaN(billDate.getTime()) &&
+      (billDate.getFullYear() !== today.getFullYear() ||
+        billDate.getMonth() !== today.getMonth());
 
     return [
       b.platform,
@@ -380,7 +394,7 @@ export function calculateRefundLossWithMatching(
   const commissionMap = new Map<string, number>();
   for (const cd of commissionDetails) {
     const key = `${cd.orderId}|${cd.platform}`;
-    commissionMap.set(key, cd.commission);
+    commissionMap.set(key, (commissionMap.get(key) || 0) + cd.commission);
   }
 
   const results: RefundLossResult[] = [];

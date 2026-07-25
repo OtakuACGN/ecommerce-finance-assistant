@@ -3,18 +3,18 @@
 @tailwind utilities;
 
 :root {
-  --app-bg: #f4f7fb;
+  --app-bg: #f3f6fa;
   --panel: #ffffff;
   --ink: #0f172a;
   --muted: #64748b;
   --line: #e2e8f0;
-  --brand: #2563eb;
-  --brand-2: #7c3aed;
+  --brand: #0f766e;
+  --brand-2: #2563eb;
   --ok: #059669;
   --warn: #d97706;
   --danger: #dc2626;
-  --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
-  --radius: 14px;
+  --shadow: 0 12px 34px rgba(15, 23, 42, 0.07);
+  --radius: 16px;
 }
 
 * {
@@ -31,9 +31,12 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    radial-gradient(1200px 500px at 10% -10%, rgba(37, 99, 235, 0.12), transparent 55%),
-    radial-gradient(900px 420px at 100% 0%, rgba(124, 58, 237, 0.10), transparent 50%),
+    radial-gradient(1100px 480px at 4% -8%, rgba(13, 148, 136, 0.13), transparent 58%),
+    radial-gradient(920px 420px at 100% 0%, rgba(37, 99, 235, 0.10), transparent 54%),
+    linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px),
     var(--app-bg);
+  background-size: auto, auto, 28px 28px, 28px 28px, auto;
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont,
     "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -69,27 +72,34 @@ body {
     @apply h-screen flex flex-col;
   }
   .app-header {
-    @apply sticky top-0 z-30 border-b backdrop-blur;
-    background: rgba(255, 255, 255, 0.86);
+    @apply sticky top-0 z-30 border-b backdrop-blur-xl;
+    background: rgba(255, 255, 255, 0.91);
     border-color: var(--line);
+    box-shadow: 0 7px 24px rgba(15, 23, 42, 0.055);
   }
   .brand-badge {
-    @apply flex items-center gap-2 rounded-xl px-2.5 py-1.5;
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.12), rgba(124, 58, 237, 0.12));
+    @apply flex items-center gap-2.5 rounded-2xl px-2.5 py-1.5;
+    background: linear-gradient(135deg, rgba(13, 148, 136, 0.11), rgba(37, 99, 235, 0.09));
+    border: 1px solid rgba(15, 118, 110, 0.12);
   }
   .brand-mark {
-    @apply w-8 h-8 rounded-xl flex items-center justify-center text-white text-sm font-bold shadow;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    @apply w-8 h-8 rounded-xl flex items-center justify-center text-white shadow;
+    background: linear-gradient(145deg, #0f766e, #2563eb);
+    box-shadow: 0 8px 18px rgba(15, 118, 110, 0.22);
   }
   .tab-pill {
-    @apply px-3.5 py-1.5 rounded-full text-sm font-medium transition-all border border-transparent;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all border border-transparent whitespace-nowrap shrink-0;
   }
   .tab-pill-active {
     @apply text-white shadow;
-    background: linear-gradient(135deg, #2563eb, #4f46e5);
+    background: linear-gradient(135deg, #0f766e, #2563eb);
+    box-shadow: 0 7px 18px rgba(15, 118, 110, 0.18);
   }
   .tab-pill-idle {
-    @apply text-slate-600 hover:bg-white hover:border-slate-200 hover:shadow-sm;
+    @apply text-slate-600 hover:bg-white hover:border-slate-200 hover:text-slate-900 hover:shadow-sm;
+  }
+  .tab-pill-secondary {
+    @apply text-[13px];
   }
   .panel-card {
     @apply bg-white border border-slate-200/80 shadow-sm;
@@ -98,7 +108,7 @@ body {
   }
   .btn-primary {
     @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-white transition;
-    background: linear-gradient(135deg, #2563eb, #4f46e5);
+    background: linear-gradient(135deg, #0f766e, #2563eb);
   }
   .btn-primary:hover {
     filter: brightness(1.05);
@@ -109,6 +119,52 @@ body {
   .soft-input {
     @apply border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition;
   }
+  .page-hero {
+    @apply relative overflow-hidden rounded-2xl border border-slate-200/80 px-4 py-4 md:px-5;
+    background:
+      linear-gradient(115deg, rgba(15, 23, 42, 0.97), rgba(15, 118, 110, 0.92)),
+      #0f172a;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  }
+  .page-hero::after {
+    content: "";
+    position: absolute;
+    width: 240px;
+    height: 240px;
+    right: -90px;
+    top: -150px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .source-chip {
+    @apply inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 shadow-sm;
+  }
+}
+
+.app-nav-track {
+  scrollbar-width: none;
+}
+.app-nav-track::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.metric-grid > div,
+.metric-grid > button {
+  border: 1px solid rgba(226, 232, 240, 0.88);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035);
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.metric-grid > div:hover,
+.metric-grid > button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(148, 163, 184, 0.55);
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.075);
 }
 
 

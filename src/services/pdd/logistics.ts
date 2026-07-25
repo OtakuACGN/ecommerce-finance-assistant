@@ -209,26 +209,77 @@ interface CostMatch {
 
 /** 匹配键规范化：去空白/全角空格，避免无编码规格对不上 */
 
+function looseSpecKey(raw: string): string {
+  return normMatchKey(raw)
+    .toLowerCase()
+    .replace(/^\d{1,3}/, "")
+    .replace(/【[^】]*】|\[[^\]]*\]|（[^）]*）|\([^)]*\)/g, "")
+    // 平台规格里常见“全面/全棉”录入差异，仅用于唯一候选兜底。
+    .replace(/全面/g, "全棉")
+    .replace(/[\s,，、;；:：/\\|_\-*×x]+/g, "");
+}
 
 export function buildProductIndexes(products: ProductSku[]) {
   const bySku = new Map<string, ProductSku>();
   const bySpec = new Map<string, ProductSku>();
   const bySpu = new Map<string, ProductSku>();
   const byName = new Map<string, ProductSku>();
+  const byLooseSpec = new Map<string, ProductSku>();
   /** 品名+规格 联合键，避免同名多规格误匹配 */
   const byNameSpec = new Map<string, ProductSku>();
+  const ambiguous = {
+    sku: new Set<string>(),
+    spec: new Set<string>(),
+    spu: new Set<string>(),
+    name: new Set<string>(),
+    nameSpec: new Set<string>(),
+    looseSpec: new Set<string>(),
+  };
+  const sameCostProfile = (a: ProductSku, b: ProductSku) =>
+    Number(a.costPrice || 0) === Number(b.costPrice || 0) &&
+    Number(a.packCost || 0) === Number(b.packCost || 0) &&
+    Number(a.weightKg || 0) === Number(b.weightKg || 0);
+  const addSafe = (
+    map: Map<string, ProductSku>,
+    blocked: Set<string>,
+    key: string,
+    product: ProductSku,
+  ) => {
+    if (!key || blocked.has(key)) return;
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, product);
+      return;
+    }
+    // 同一匹配键对应不同成本/重量时宁可待补，也不能静默取最后一条。
+    if (!sameCostProfile(prev, product)) {
+      map.delete(key);
+      blocked.add(key);
+    }
+  };
   for (const p of products) {
     const sku = normMatchKey(p.skuCode);
     const spec = normMatchKey(p.specName);
     const code = normMatchKey(p.productCode);
     const name = normMatchKey(p.productName);
-    if (sku) bySku.set(sku, p);
-    if (spec) bySpec.set(spec, p);
-    if (code) bySpu.set(code, p);
-    if (name) byName.set(name, p);
-    if (name && spec) byNameSpec.set(`${name}||${spec}`, p);
+    const looseSpec = looseSpecKey(p.specName || p.skuCode);
+    if (sku) addSafe(bySku, ambiguous.sku, sku, p);
+    if (spec) addSafe(bySpec, ambiguous.spec, spec, p);
+    if (code) addSafe(bySpu, ambiguous.spu, code, p);
+    if (name) addSafe(byName, ambiguous.name, name, p);
+    if (looseSpec) {
+      addSafe(byLooseSpec, ambiguous.looseSpec, looseSpec, p);
+    }
+    if (name && spec) {
+      addSafe(
+        byNameSpec,
+        ambiguous.nameSpec,
+        `${name}||${spec}`,
+        p,
+      );
+    }
   }
-  return { bySku, bySpec, bySpu, byName, byNameSpec };
+  return { bySku, bySpec, bySpu, byName, byNameSpec, byLooseSpec };
 }
 
 function orderHasMerchantCode(order: PddOrder): boolean {
@@ -285,6 +336,13 @@ export function matchProduct(
     if (spec && indexes.bySpec.has(spec)) {
       return wrap(indexes.bySpec.get(spec)!, hasCode ? "商品规格(编码未命中)" : "商品规格(无编码)");
     }
+    const looseSpec = looseSpecKey(spec || sku);
+    if (looseSpec && indexes.byLooseSpec.has(looseSpec)) {
+      return wrap(
+        indexes.byLooseSpec.get(looseSpec)!,
+        hasCode ? "规格规范化(编码未命中)" : "规格规范化(无编码)",
+      );
+    }
     // 生成商品资料时可能把商品ID写入商品编码/规格编码
     if (productId && indexes.bySku.has(productId)) {
       return wrap(indexes.bySku.get(productId)!, "商品ID=规格编码");
@@ -293,19 +351,17 @@ export function matchProduct(
       return wrap(indexes.bySpu.get(productId)!, "商品ID=商品编码");
     }
     // 模糊：规格互相包含（仅无编码或编码未命中时）
-    if (spec) {
-      for (const [k, p] of indexes.bySpec) {
-        if (k.includes(spec) || spec.includes(k)) {
-          return wrap(p, "模糊商品规格");
-        }
-      }
+    if (spec && spec.length >= 2) {
+      const hits = Array.from(indexes.bySpec.entries())
+        .filter(([k]) => k.length >= 2 && (k.includes(spec) || spec.includes(k)))
+        .map(([, p]) => p);
+      if (hits.length === 1) return wrap(hits[0], "模糊商品规格");
     }
-    if (sku) {
-      for (const [k, p] of indexes.bySpec) {
-        if (k.includes(sku) || sku.includes(k)) {
-          return wrap(p, "模糊规格");
-        }
-      }
+    if (sku && sku.length >= 2) {
+      const hits = Array.from(indexes.bySpec.entries())
+        .filter(([k]) => k.length >= 2 && (k.includes(sku) || sku.includes(k)))
+        .map(([, p]) => p);
+      if (hits.length === 1) return wrap(hits[0], "模糊规格");
     }
     // 最弱：仅品名（多规格时可能不准，放最后）
     if (name && indexes.byName.has(name)) {

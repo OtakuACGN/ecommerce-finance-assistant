@@ -87,19 +87,30 @@ export function detectSourceKind(fileData: FileData): SourceKind {
   ) {
     return "pdd_bill";
   }
-  if (
-    name.includes("orders_export") ||
-    name.includes("订单") ||
-    (joined.includes("订单号") && (joined.includes("商家实收") || joined.includes("用户实付")))
-  ) {
-    return "pdd_orders";
-  }
+  // 商品资料优先于模糊的“订单”文件名，避免“订单商品资料.xlsx”被误判。
   if (
     name.includes("商品资料") ||
     name.includes("product") ||
-    (nJoined.includes("商品编码") && (nJoined.includes("规格编码") || nJoined.includes("规格名称")))
+    (nJoined.includes("商品编码") &&
+      (nJoined.includes("规格编码") || nJoined.includes("规格名称")))
   ) {
     return "product_master";
+  }
+  const hasOrderId =
+    joined.includes("订单号") ||
+    joined.includes("商户订单号") ||
+    nJoined.includes("订单号");
+  const hasOrderMoney =
+    joined.includes("商家实收") ||
+    joined.includes("用户实付") ||
+    joined.includes("商品总价") ||
+    nJoined.includes("商家实收") ||
+    nJoined.includes("用户实付");
+  if (
+    name.includes("orders_export") ||
+    (hasOrderId && hasOrderMoney)
+  ) {
+    return "pdd_orders";
   }
   // 仅识别分天推广（商品汇总细分分摊已停用）
   const hasAdSpendCol =
@@ -146,7 +157,7 @@ export function parsePddOrders(fileData: FileData): PddOrder[] {
   const data = normalizeFileData(fileData);
   const h = data.headers;
   const idx = {
-    product: findCol(h, ["商品"]),
+    product: findColExactThen(h, ["商品", "商品名称", "商品标题"]),
     orderId: findCol(h, ["订单号"]),
     status: findCol(h, ["订单状态"]),
     goodsTotal: findCol(h, ["商品总价", "商品总额", "订单金额"]),
@@ -164,7 +175,7 @@ export function parsePddOrders(fileData: FileData): PddOrder[] {
       "商品编号",
       "商品ID(必填)",
     ]),
-    specName: findCol(h, ["商品规格", "规格名称", "规格"]),
+    specName: findColExactThen(h, ["商品规格", "规格名称", "规格"]),
     // 注意：不要用裸「商家编码」，会误匹配「商家编码-商品」
     merchantSku: findCol(h, ["商家编码-规格", "规格编码", "商家规格编码", "sku编码", "SKU编码"]),
     merchantSpu: findCol(h, ["商家编码-商品", "商品编码", "spu编码", "SPU编码"]),
@@ -234,11 +245,12 @@ function classifyBillLine(
     if (/手续费|服务费|费率/.test(t)) return "other";
     return "withdraw";
   }
-  if (/退款|退货|售后/.test(t)) return "refund";
-  if (/技术服务费|基础技术服务费|服务费返还/.test(t)) {
-    if (line.income > 0 || /返还|退回/.test(t)) return "tech_refund";
+  // 技术服务费退款/返还必须先于通用“退款”判断，否则会误扣商品收入。
+  if (/技术服务费|基础技术服务费|服务费返还|服务费退回/.test(t)) {
+    if (line.income > 0 || /退款|返还|退回/.test(t)) return "tech_refund";
     return "tech";
   }
+  if (/退款|退货|售后/.test(t)) return "refund";
   if (/交易收入|订单收入|货款/.test(t)) return "income";
   if (/补贴|优惠券|奖励|返点|佣金返还|活动|满减/.test(t)) return "subsidy";
   if (/其他服务|扣款|罚款|违约|运费险|保险/.test(t)) return "other";
@@ -407,7 +419,11 @@ export function parseProductMaster(fileData: FileData): ProductSku[] {
   const find = (keys: string[]) => {
     for (const k of keys) {
       const nk = normalizeHeader(k);
-      let idx = hNorm.findIndex((x) => x.includes(nk) || nk.includes(x));
+      let idx = hNorm.findIndex((x) => x && x === nk);
+      if (idx >= 0) return idx;
+      idx = hNorm.findIndex(
+        (x) => x && nk && (x.includes(nk) || nk.includes(x)),
+      );
       if (idx >= 0) return idx;
       idx = h.findIndex((x) => String(x).includes(k));
       if (idx >= 0) return idx;

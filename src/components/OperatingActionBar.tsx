@@ -86,11 +86,11 @@ export default function OperatingActionBar({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5">
         <button
           type="button"
           onClick={onBuildReport}
-          className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
+          className="btn-primary px-4 py-2"
         >
           生成经营报表
         </button>
@@ -98,7 +98,7 @@ export default function OperatingActionBar({
           type="button"
           onClick={onExportOperating}
           disabled={!opReport}
-          className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-40"
+          className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-40"
         >
           导出 Excel
         </button>
@@ -106,7 +106,7 @@ export default function OperatingActionBar({
           type="button"
           onClick={onExportAnomalies}
           disabled={!opReport}
-          className="px-4 py-2 rounded-lg bg-rose-600 text-white text-sm hover:bg-rose-700 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-sm font-medium hover:bg-rose-100 disabled:opacity-40"
         >
           导出异常订单
         </button>
@@ -114,7 +114,7 @@ export default function OperatingActionBar({
           type="button"
           onClick={onCopyUnmatchedSkus}
           disabled={!opReport || unmatchedN === 0}
-          className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm hover:bg-amber-600 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100 disabled:opacity-40"
         >
           复制待补SKU
         </button>
@@ -122,7 +122,7 @@ export default function OperatingActionBar({
           type="button"
           onClick={onCopyBossOnePager}
           disabled={!opReport}
-          className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-900 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm font-medium hover:bg-slate-900 disabled:opacity-40"
         >
           复制老板一页纸
         </button>
@@ -130,7 +130,7 @@ export default function OperatingActionBar({
           type="button"
           onClick={onCopyBossOnePagerTsv}
           disabled={!opReport}
-          className="px-4 py-2 rounded-lg border border-slate-400 bg-white text-slate-800 text-sm hover:bg-slate-50 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50 disabled:opacity-40"
         >
           复制一页纸表格
         </button>
@@ -138,7 +138,7 @@ export default function OperatingActionBar({
           type="button"
           onClick={() => onExportProductMaster("all")}
           disabled={opOrdersLen === 0}
-          className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-700 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-sm font-medium hover:bg-violet-100 disabled:opacity-40"
         >
           生成商品资料
         </button>
@@ -146,21 +146,21 @@ export default function OperatingActionBar({
           type="button"
           onClick={() => onExportProductMaster("missing_cost")}
           disabled={opOrdersLen === 0}
-          className="px-4 py-2 rounded-lg bg-violet-500/90 text-white text-sm hover:bg-violet-600 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl border border-violet-200 bg-white text-violet-700 text-sm hover:bg-violet-50 disabled:opacity-40"
         >
           待补商品资料
         </button>
         <button
           type="button"
           onClick={onExportCostSettings}
-          className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50"
+          className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 text-sm hover:bg-slate-50"
         >
           导出参数JSON
         </button>
         <button
           type="button"
           onClick={onImportCostSettings}
-          className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50"
+          className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 text-sm hover:bg-slate-50"
         >
           导入参数JSON
         </button>

@@ -46,9 +46,10 @@ export default function OperatingDashboard({
                   {(opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0) > 1 ? (
                     <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 leading-relaxed">
                       平台费口径：账务技术服务费合计 ¥{(opReport.summary.techFee || 0).toFixed(2)}，
-                      已挂到订单进毛利 ¥{(opReport.summary.techFeeAttributed || 0).toFixed(2)}
-                      （差额 ¥{(((opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0))).toFixed(2)} 未归因，毛利只扣已归因部分）。
-                      其他费用：账务 ¥{(opReport.summary.otherFee || 0).toFixed(2)} / 进毛利 ¥{(opReport.summary.otherFeeAttributed || 0).toFixed(2)}。
+                      其中可挂到订单明细 ¥{(opReport.summary.techFeeAttributed || 0).toFixed(2)}
+                      （差额 ¥{(((opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0))).toFixed(2)} 未归因）。
+                      自然月利润已扣账务合计；订单/SPU明细只展示可归因部分。
+                      其他费用：账务合计 ¥{(opReport.summary.otherFee || 0).toFixed(2)} / 可归因 ¥{(opReport.summary.otherFeeAttributed || 0).toFixed(2)}。
                     </div>
                   ) : null}
                 </div>
@@ -100,7 +101,7 @@ export default function OperatingDashboard({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 mb-4">
+              <div className="metric-grid grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 mb-4">
                 <div className="bg-slate-50 rounded-lg p-3">
                   <div className="text-xs text-gray-500">商家实收</div>
                   <div className="text-lg font-bold">

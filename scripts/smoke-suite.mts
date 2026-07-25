@@ -107,6 +107,198 @@ const pdd = await load("src/services/pddBusiness.ts");
   const imp = pdd.productMasterImportTable(rows);
   ok("productMaster.table", Array.isArray(imp) && imp.length >= 2);
 
+  // Parser/import guardrails: avoid silent duplication and false cost matches.
+  {
+    const productFile = fd("订单商品资料.xlsx", [
+      ["商品编码", "商品名称", "<必填>规格编码", "规格名称", "", "参考成本价(元)"],
+      ["P1", "商品A", "S1", "标准", 999, 12],
+    ]);
+    ok(
+      "parser.product_master_beats_filename_order",
+      pdd.detectSourceKind(productFile) === "product_master",
+      String(pdd.detectSourceKind(productFile)),
+    );
+    const parsedProducts = pdd.parseProductMaster(productFile);
+    ok(
+      "parser.empty_header_not_selected",
+      parsedProducts.length === 1 &&
+        parsedProducts[0].salePrice === 0 &&
+        parsedProducts[0].costPrice === 12,
+      JSON.stringify(parsedProducts[0]),
+    );
+
+    const techRefund = pdd.aggregatePddBill([
+      {
+        orderId: "T1",
+        time: "2026-06-01",
+        income: 2,
+        expense: 0,
+        billType: "技术服务费退款",
+        remark: "",
+        bizDesc: "基础技术服务费退回",
+      },
+    ]);
+    ok(
+      "bill.tech_refund_not_goods_refund",
+      techRefund.totals.refund === 0 &&
+        techRefund.totals.techFeeRefund === 2,
+      JSON.stringify(techRefund.totals),
+    );
+
+    const ambiguousProducts = [
+      {
+        productCode: "P1", productName: "商品A", skuCode: "S1", specName: "标准",
+        salePrice: 20, costPrice: 10, packCost: 0, weightKg: 0.5, stock: 0,
+      },
+      {
+        productCode: "P2", productName: "商品B", skuCode: "S2", specName: "标准",
+        salePrice: 30, costPrice: 20, packCost: 0, weightKg: 0.5, stock: 0,
+      },
+    ];
+    const ambiguousOrder = {
+      ...orders[0],
+      productName: "未知商品",
+      specName: "标准",
+      merchantSku: "",
+      merchantSpu: "",
+      productId: "",
+    };
+    const ambiguousHit = pdd.matchProduct(
+      ambiguousOrder,
+      pdd.buildProductIndexes(ambiguousProducts),
+      { matchBySpecWhenNoCode: true },
+    );
+    ok(
+      "cost.ambiguous_spec_stays_unmatched",
+      ambiguousHit.matched === false,
+      JSON.stringify(ambiguousHit),
+    );
+    const typoOrder = {
+      ...orders[0],
+      productName: "荞麦枕",
+      specName: "01全面双层纱-粉紫【亲肤透气】,30*60cm",
+      merchantSku: "",
+      merchantSpu: "乐可",
+      productId: "",
+    };
+    const typoProducts = [
+      {
+        productCode: "乐可", productName: "荞麦枕", skuCode: "全棉双层纱-粉紫,30*60cm",
+        specName: "全棉双层纱-粉紫,30*60cm", salePrice: 50, costPrice: 20,
+        packCost: 0, weightKg: 0.5, stock: 0,
+      },
+      {
+        productCode: "乐可", productName: "荞麦枕", skuCode: "全棉双层纱-灰色,30*60cm",
+        specName: "全棉双层纱-灰色,30*60cm", salePrice: 50, costPrice: 18,
+        packCost: 0, weightKg: 0.5, stock: 0,
+      },
+    ];
+    const typoHit = pdd.matchProduct(
+      typoOrder,
+      pdd.buildProductIndexes(typoProducts),
+      { matchBySpecWhenNoCode: true },
+    );
+    ok(
+      "cost.loose_spec_unique_match",
+      typoHit.matched === true && typoHit.costPrice === 20,
+      JSON.stringify(typoHit),
+    );
+
+    const mergedNameOnly = pdd.mergeProductMasters(
+      [{
+        productCode: "", productName: "商品A", skuCode: "", specName: "",
+        salePrice: 10, costPrice: 2, packCost: 0, weightKg: 0, stock: 0,
+      }],
+      [{
+        productCode: "", productName: "商品B", skuCode: "", specName: "",
+        salePrice: 12, costPrice: 3, packCost: 0, weightKg: 0, stock: 0,
+      }],
+    );
+    ok(
+      "productMaster.name_only_rows_do_not_collapse",
+      mergedNameOnly.length === 2,
+      JSON.stringify(mergedNameOnly),
+    );
+
+    const mergeBillLines = pdd.replaceImportedBillSource;
+    ok(
+      "import.bill_replace_helper_exists",
+      typeof mergeBillLines === "function",
+      typeof mergeBillLines,
+    );
+    if (typeof mergeBillLines === "function") {
+      const oldLines = [
+        { orderId: "O1", time: "2026-06-01", income: 10, expense: 0, billType: "交易收入", remark: "", bizDesc: "", shopName: "店A", sourceName: "六月账.csv" },
+        { orderId: "O2", time: "2026-05-01", income: 8, expense: 0, billType: "交易收入", remark: "", bizDesc: "", shopName: "店A", sourceName: "五月账.csv" },
+      ];
+      const nextLines = [
+        { orderId: "O1", time: "2026-06-01", income: 11, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+      ];
+      const mergedLines = mergeBillLines(oldLines, nextLines, "店A", "六月账.csv");
+      ok(
+        "import.same_bill_source_replaces_not_duplicates",
+        mergedLines.length === 2 &&
+          mergedLines.filter((x: any) => x.sourceName === "六月账.csv").length === 1 &&
+          mergedLines.find((x: any) => x.sourceName === "六月账.csv")?.income === 11,
+        JSON.stringify(mergedLines),
+      );
+    }
+  }
+
+  // Generic module guardrails.
+  {
+    const logic = await load("src/services/businessLogic.ts");
+    const loss = logic.calculateRefundLossWithMatching(
+      [{ orderId: "R1", platform: "拼多多", refundAmount: 100, refundDate: "2026-06-01" }],
+      [
+        { orderId: "R1", platform: "拼多多", commission: 1.2 },
+        { orderId: "R1", platform: "拼多多", commission: 0.8 },
+      ],
+      0.05,
+    );
+    ok(
+      "refundLoss.multiple_commission_lines_sum",
+      Math.abs(loss.results[0].commission - 2) < 0.001,
+      JSON.stringify(loss.results[0]),
+    );
+
+    const mappedOnce = logic.applySkuMapping(
+      [["平台SKU"], ["红色"]],
+      [{ platformName: "红色", internalCode: "SKU-RED", price: 1 }],
+    );
+    const mappedTwice = logic.applySkuMapping(
+      mappedOnce,
+      [{ platformName: "红色", internalCode: "SKU-RED", price: 1 }],
+    );
+    ok(
+      "mapping.apply_is_idempotent",
+      mappedTwice[0].filter((x: any) => x === "内部编码").length === 1 &&
+        mappedTwice[1].length === mappedTwice[0].length,
+      JSON.stringify(mappedTwice),
+    );
+
+    const now = new Date();
+    const previousYearSameMonth =
+      `${now.getFullYear() - 1}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const accrual = logic.generateAccrualTable([{
+      fileName: "old.csv",
+      platform: "拼多多",
+      date: previousYearSameMonth,
+      totalAmount: 10,
+      orderCount: 1,
+      commission: 0,
+      techFee: 0,
+      subsidy: 0,
+      netAmount: 10,
+      rawData: [],
+    }]);
+    ok(
+      "accrual.same_month_previous_year_is_cross_period",
+      accrual[1][10] === "⚠️跨期",
+      String(accrual[1][10]),
+    );
+  }
+
   // confirmed business rules: natural-month ledger basis, ¥1/kg additional
   // shipping, confirmed-revenue margin, and a before-shipping profit bridge.
   {

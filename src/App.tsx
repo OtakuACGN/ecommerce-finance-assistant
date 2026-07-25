@@ -59,6 +59,7 @@ import {
   billRecordFromPdd,
   normalizeShopName,
   sourceKindLabel,
+  replaceImportedBillSource,
 } from "./services/pddBusiness";
 import {
   loadOpCostSettings,
@@ -393,26 +394,52 @@ function App() {
                 ...stamped,
               ];
             } else if (mode === "append_new") {
-              const ids = new Set(localOrders.map((o) => o.orderId));
+              const ids = new Set(
+                localOrders.map(
+                  (o) => `${normalizeShopName(o.shopName)}||${o.orderId}`,
+                ),
+              );
               localOrders = [
                 ...localOrders,
-                ...stamped.filter((o) => !ids.has(o.orderId)),
+                ...stamped.filter(
+                  (o) =>
+                    !ids.has(
+                      `${normalizeShopName(o.shopName)}||${o.orderId}`,
+                    ),
+                ),
               ];
             } else {
-              const map = new Map(localOrders.map((o) => [o.orderId, o]));
-              for (const o of stamped) map.set(o.orderId, o);
+              const orderKey = (o: PddOrder) =>
+                `${normalizeShopName(o.shopName)}||${o.orderId}`;
+              const map = new Map(localOrders.map((o) => [orderKey(o), o]));
+              for (const o of stamped) map.set(orderKey(o), o);
               localOrders = Array.from(map.values());
             }
             pushOpSource(kind, fileData.name, stamped.length, shop);
             stats.orders += stamped.length;
           } else if (kind === "pdd_bill") {
-            const stamped = ingested.billLines.map((l) => ({
-              ...l,
-              shopName: shop,
-            }));
-            localBill = [...localBill, ...stamped];
+            const stamped = ingested.billLines;
+            localBill = replaceImportedBillSource(
+              localBill,
+              stamped,
+              shop,
+              fileData.name,
+            );
             if (ingested.billRecord) {
-              setBillRecords((prev) => [...prev, ingested.billRecord!]);
+              const operatingBillRecord = {
+                ...ingested.billRecord,
+                fileName: `${shop} · ${ingested.billRecord.fileName}`,
+              };
+              setBillRecords((prev) => [
+                ...prev.filter(
+                  (record) =>
+                    !(
+                      record.fileName === operatingBillRecord.fileName &&
+                      record.platform === operatingBillRecord.platform
+                    ),
+                ),
+                operatingBillRecord,
+              ]);
             }
             pushOpSource(kind, fileData.name, stamped.length, shop);
             stats.bill += stamped.length;
@@ -1377,15 +1404,44 @@ const {
         <div className="flex-1 min-h-0 overflow-auto p-4 md:p-6 bg-transparent">
           <div className="max-w-[1680px] mx-auto w-full space-y-4">
             <div className="panel-card p-4 md:p-6">
-              <div className="mb-3 flex items-start justify-between gap-3 flex-shrink-0">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800 tracking-tight">
+              <div className="page-hero mb-4 flex items-start justify-between gap-4 flex-shrink-0 text-white">
+                <div className="relative z-10 min-w-0">
+                  <div className="text-[11px] font-semibold tracking-[0.18em] text-teal-100/80">
+                    PINDUODUO FINANCE
+                  </div>
+                  <h2 className="mt-1 text-xl font-extrabold tracking-tight">
                     拼多多经营分析
                   </h2>
-                  <p className="text-sm text-slate-500 mt-1">
-                    适配订单/账务/商品/推广四表。支持多店铺对比、SPU/规格毛利排行、待补SKU带品名规格导出。
+                  <p className="text-sm text-slate-200/90 mt-1 max-w-3xl leading-relaxed">
+                    订单、账务、成本、推广四表统一核算；快速定位利润、退款、广告与成本异常。
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1">
+                      订单 {opOrders.length.toLocaleString()} 单
+                    </span>
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1">
+                      账务 {opBillLines.length.toLocaleString()} 行
+                    </span>
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1">
+                      成本资料 {opProducts.length.toLocaleString()} 条
+                    </span>
+                    <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1">
+                      {opReport ? "✓ 报表已生成" : "等待生成报表"}
+                    </span>
+                  </div>
                 </div>
+                {(opOrders.length > 0 || opBillLines.length > 0) && (
+                  <div className="relative z-10 hidden lg:block rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-right backdrop-blur-sm">
+                    <div className="text-[10px] uppercase tracking-wider text-teal-100/70">
+                      当前数据期间
+                    </div>
+                    <div className="mt-0.5 text-xs font-semibold">
+                      {opBillLines.length > 0
+                        ? formatOpBillPeriod(opBillLines)
+                        : formatOpOrdersPeriod(opOrders)}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 有报表时收起导入/参数区，避免出现「页面滚 + 表格滚」双纵向条 */}
@@ -1458,12 +1514,14 @@ const {
 
 
               {opSources.length > 0 && (
-                <div className="text-xs text-gray-500 mb-3">
-                  来源：
+                <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    数据来源
+                  </span>
                   {opSources.map((s) => (
                     <span
-                      key={s.kind}
-                      className="inline-block mr-2 px-2 py-0.5 bg-gray-100 rounded"
+                      key={`${s.kind}|${s.shop || ""}|${s.name}`}
+                      className="source-chip"
                     >
                       {sourceKindLabel(s.kind as any)}
                       {s.shop ? ` · ${s.shop}` : ""} · {s.name} · {s.rows}行

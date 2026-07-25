@@ -10,7 +10,7 @@
     "build:dir": "vite build && electron-builder --win dir",
     "preview": "vite preview",
     "pack": "npm run build",
-    "smoke": "npx tsx scripts/smoke-suite.mts"
+    "smoke": "tsx scripts/smoke-suite.mts"
   },
   "keywords": [
     "electron",
@@ -38,6 +38,7 @@
     "electron-builder": "^24.9.1",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
+    "tsx": "^4.16.2",
     "typescript": "^5.3.3",
     "vite": "^5.0.8",
     "vite-plugin-electron": "^0.15.5",

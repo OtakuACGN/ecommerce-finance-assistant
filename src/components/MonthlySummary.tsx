@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { exportToExcel } from "../utils/excel";
 import { saveDataFile } from "../utils/desktop";
 
@@ -75,6 +75,27 @@ export default function MonthlySummary({
     if (isNaN(parsed.getTime())) return "";
     return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
   }, []);
+  const autoSelectedRef = useRef(false);
+
+  useEffect(() => {
+    if (autoSelectedRef.current || billRecords.length === 0) return;
+    const hasSelectedMonth = billRecords.some(
+      (record) => getMonthKey(record.date) === currentMonthStr,
+    );
+    if (!hasSelectedMonth) {
+      const monthKeys = billRecords
+        .map((record) => getMonthKey(record.date))
+        .filter((key) => /^\d{4}-\d{2}$/.test(key))
+        .sort();
+      const latest = monthKeys[monthKeys.length - 1];
+      if (latest) {
+        const [year, month] = latest.split("-").map(Number);
+        setSelectedYear(year);
+        setSelectedMonth(month);
+      }
+    }
+    autoSelectedRef.current = true;
+  }, [billRecords, currentMonthStr, getMonthKey]);
 
   const buildSummary = useCallback(
     (monthKey: string | null) => {
@@ -236,7 +257,7 @@ export default function MonthlySummary({
     <div className="flex-1 overflow-auto p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* 月度选择器 */}
-        <div className="bg-white rounded-xl shadow">
+        <div className="panel-card">
           <div className="p-4 border-b border-gray-100">
             <h2 className="font-semibold text-gray-800">📅 月度对账汇总</h2>
             <p className="text-xs text-gray-500 mt-0.5">
@@ -335,35 +356,35 @@ export default function MonthlySummary({
                 value: currentTotal.gmv,
                 unit: "¥",
                 icon: "💰",
-                color: "blue",
+                colorClass: "text-blue-700",
               },
               {
                 label: "净收款",
                 value: currentTotal.netAmount,
                 unit: "¥",
                 icon: "✅",
-                color: "green",
+                colorClass: "text-emerald-700",
               },
               {
                 label: "佣金+扣点",
                 value: currentTotal.commission + currentTotal.techFee,
                 unit: "¥",
                 icon: "💸",
-                color: "red",
+                colorClass: "text-rose-700",
               },
               {
                 label: "补贴/返点",
                 value: currentTotal.subsidy,
                 unit: "¥",
                 icon: "🎁",
-                color: "purple",
+                colorClass: "text-violet-700",
               },
             ].map((card) => (
-              <div key={card.label} className="bg-white rounded-xl shadow p-4">
+              <div key={card.label} className="panel-card p-4">
                 <div className="text-xs text-gray-500 mb-1">
                   {card.icon} {card.label}
                 </div>
-                <div className={`text-xl font-bold text-${card.color}-700`}>
+                <div className={`text-xl font-bold ${card.colorClass}`}>
                   {card.unit}
                   {fmt(card.value)}
                 </div>
@@ -394,7 +415,7 @@ export default function MonthlySummary({
 
         {/* 平台汇总表 */}
         {currentSummary.length > 0 ? (
-          <div className="bg-white rounded-xl shadow overflow-hidden">
+          <div className="panel-card overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between">
               <div>
                 <h3 className="font-semibold text-gray-800">
@@ -574,7 +595,7 @@ export default function MonthlySummary({
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-xl shadow p-16 text-center text-gray-400">
+          <div className="panel-card p-16 text-center text-gray-400">
             <div className="text-5xl mb-4">📊</div>
             <div className="text-lg font-medium">
               暂无{selectedYear}年{selectedMonth}月数据

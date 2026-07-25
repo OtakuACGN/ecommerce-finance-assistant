@@ -377,11 +377,19 @@ export function mergeProductMasters(
   existing: ProductSku[],
   incoming: ProductSku[],
 ): ProductSku[] {
-  const keyOf = (p: ProductSku) =>
-    normMatchKey(p.skuCode) ||
-    `${normMatchKey(p.productCode)}||${normMatchKey(p.specName)}` ||
-    normMatchKey(p.specName) ||
-    normMatchKey(p.productName);
+  const keyOf = (p: ProductSku) => {
+    const sku = normMatchKey(p.skuCode);
+    const code = normMatchKey(p.productCode);
+    const spec = normMatchKey(p.specName);
+    const name = normMatchKey(p.productName);
+    if (sku) return `sku:${sku}`;
+    if (code && spec) return `code-spec:${code}||${spec}`;
+    if (code) return `code:${code}`;
+    if (name && spec) return `name-spec:${name}||${spec}`;
+    if (spec) return `spec:${spec}`;
+    if (name) return `name:${name}`;
+    return "";
+  };
   const map = new Map<string, ProductSku>();
   for (const p of existing) {
     const k = keyOf(p);
