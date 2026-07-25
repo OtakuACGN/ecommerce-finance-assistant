@@ -54,8 +54,8 @@ export default function DataTable({
   const [viewportH, setViewportH] = useState(480);
 
   const rootRef = useRef<HTMLDivElement>(null);
-  const hWrapRef = useRef<HTMLDivElement>(null);
-  const vWrapRef = useRef<HTMLDivElement>(null);
+  const hWrapRef = useRef<HTMLDivElement | null>(null);
+  const vWrapRef = useRef<HTMLDivElement | null>(null);
   const floatTrackRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
   const dragRef = useRef<{ active: boolean; startX: number; startLeft: number } | null>(null);

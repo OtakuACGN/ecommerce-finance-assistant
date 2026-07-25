@@ -9,6 +9,8 @@ import {
 export const OP_COST_STORAGE_KEY = "pdd-operating-cost-settings";
 /** 一次性：旧默认退货损耗 0.1 → 0（可在参数里改回） */
 export const OP_COST_MIGRATE_RESTOCK0_KEY = "pdd-operating-cost-migrate-restock0";
+/** 一次性：旧默认首重/续重 → 1kg内3元、每续1kg加1元 */
+export const OP_COST_MIGRATE_SHIPPING1_KEY = "pdd-operating-cost-migrate-shipping1";
 
 export function cloneDefaultCostSettings(): CostSettings {
   return {
@@ -106,6 +108,55 @@ export function loadOpCostSettings(): CostSettings {
       localStorage.setItem(OP_COST_MIGRATE_RESTOCK0_KEY, "1");
       if (Math.abs(Number(settings.returnRestockRate) - 0.1) < 1e-9) {
         settings.returnRestockRate = 0;
+        try {
+          localStorage.setItem(OP_COST_STORAGE_KEY, JSON.stringify(settings));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    // 仅迁移仍等于旧内置默认值的参数；用户自行改过的运费规则保持不动。
+    if (
+      typeof localStorage !== "undefined" &&
+      !localStorage.getItem(OP_COST_MIGRATE_SHIPPING1_KEY)
+    ) {
+      localStorage.setItem(OP_COST_MIGRATE_SHIPPING1_KEY, "1");
+      let changed = false;
+      if (
+        Number(settings.firstWeightKg) === 1 &&
+        Number(settings.firstWeightFee) === 3 &&
+        Number(settings.additionalWeightKg) === 1 &&
+        Number(settings.additionalWeightFee) === 2
+      ) {
+        settings.additionalWeightFee = 1;
+        changed = true;
+      }
+      const oldRuleByLabel: Record<string, { first: number; additional: number }> = {
+        圆通: { first: 3, additional: 2 },
+        邮政: { first: 3.5, additional: 2.5 },
+        中通: { first: 3, additional: 2 },
+        韵达: { first: 3, additional: 2 },
+        申通: { first: 3, additional: 2 },
+      };
+      settings.expressRules = (settings.expressRules || []).map((rule) => {
+        const old = oldRuleByLabel[String(rule.label || "")];
+        if (
+          old &&
+          Number(rule.firstWeightKg) === 1 &&
+          Number(rule.firstWeightFee) === old.first &&
+          Number(rule.additionalWeightKg) === 1 &&
+          Number(rule.additionalWeightFee) === old.additional
+        ) {
+          changed = true;
+          return {
+            ...rule,
+            firstWeightFee: 3,
+            additionalWeightFee: 1,
+          };
+        }
+        return rule;
+      });
+      if (changed) {
         try {
           localStorage.setItem(OP_COST_STORAGE_KEY, JSON.stringify(settings));
         } catch {

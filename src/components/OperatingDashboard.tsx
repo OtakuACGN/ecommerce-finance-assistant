@@ -108,12 +108,12 @@ export default function OperatingDashboard({
                   </div>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500">确认收入（毛利基数）</div>
+                  <div className="text-xs text-gray-500">确认收入（自然月账务口径）</div>
                   <div className="text-lg font-bold text-emerald-700">
                     ¥{(opReport.summary.confirmedRevenue ?? opReport.summary.merchantReceived).toFixed(2)}
                   </div>
                   <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">
-                    部分退：收入只扣退款额；商品成本仍按全额
+                    账务交易收入 − 退款 + 补贴；无账务时回退订单确认收入
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-3">
@@ -282,13 +282,13 @@ export default function OperatingDashboard({
                   </div>
                 </div>
                 <div className="bg-emerald-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500">毛利(未扣广告)</div>
+                  <div className="text-xs text-gray-500">自然月利润(未扣广告)</div>
                   <div className="text-lg font-bold text-emerald-700">
                     ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(2)}
                   </div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-3 border border-green-200">
-                  <div className="text-xs text-gray-500">毛利(已扣广告)</div>
+                  <div className="text-xs text-gray-500">自然月利润(已扣广告/估算运费)</div>
                   <div className="text-lg font-bold text-green-700">
                     ¥{opReport.summary.estimatedProfitAfterAd.toFixed(2)}
                   </div>
@@ -296,8 +296,17 @@ export default function OperatingDashboard({
                     {opReport.summary.estimatedProfitBeforeAd.toFixed(0)} − {opReport.summary.adSpend.toFixed(0)} = {opReport.summary.estimatedProfitAfterAd.toFixed(0)}
                   </div>
                 </div>
+                <div className="bg-cyan-50 rounded-lg p-3 border border-cyan-200">
+                  <div className="text-xs text-gray-500">自然月利润(已扣广告/未扣运费)</div>
+                  <div className="text-lg font-bold text-cyan-700">
+                    ¥{opReport.summary.profitAfterAdBeforeShipping.toFixed(2)}
+                  </div>
+                  <div className="text-[11px] text-cyan-800/80 mt-0.5">
+                    用此金额 − 实际快递账单净运费
+                  </div>
+                </div>
                 <div className="bg-blue-50 rounded-lg p-3">
-                  <div className="text-xs text-gray-500">毛利率 / 已发货未成交</div>
+                  <div className="text-xs text-gray-500">利润率(利润/确认收入) / 已发货未成交</div>
                   <div className="text-lg font-bold text-blue-700">
                     {(opReport.summary.profitMargin * 100).toFixed(1)}%
                   </div>
@@ -521,7 +530,7 @@ export default function OperatingDashboard({
                   <div>
                     <div className="text-sm font-semibold">毛利被谁吃掉了（对照）</div>
                     <div className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                      底座毛利 → 扣退货相关 → 扣扣点税 → 扣广告 = 最终毛利
+                      自然月账务收入 → 扣成本/费用 → 扣广告 = 最终利润
                     </div>
                   </div>
                   <div className="text-right text-[11px] text-slate-300">
@@ -581,12 +590,12 @@ export default function OperatingDashboard({
                     </div>
                   </div>
                   <div className="rounded-lg bg-emerald-500/20 p-2.5 border border-emerald-400/30">
-                    <div className="text-[11px] text-emerald-200">⑥ 最终毛利</div>
+                    <div className="text-[11px] text-emerald-200">⑥ 自然月最终利润</div>
                     <div className="text-lg font-bold text-emerald-200">
                       ¥{opReport.summary.estimatedProfitAfterAd.toFixed(0)}
                     </div>
                     <div className="text-[10px] text-emerald-100/70 mt-0.5">
-                      毛利率 {(opReport.summary.profitMargin * 100).toFixed(1)}% · 扣前
+                      利润率 {(opReport.summary.profitMargin * 100).toFixed(1)}% · 扣前
                       ¥{opReport.summary.estimatedProfitBeforeAd.toFixed(0)}
                     </div>
                   </div>

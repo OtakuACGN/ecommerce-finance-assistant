@@ -107,6 +107,62 @@ const pdd = await load("src/services/pddBusiness.ts");
   const imp = pdd.productMasterImportTable(rows);
   ok("productMaster.table", Array.isArray(imp) && imp.length >= 2);
 
+  // confirmed business rules: natural-month ledger basis, ¥1/kg additional
+  // shipping, confirmed-revenue margin, and a before-shipping profit bridge.
+  {
+    const shippingSettings = {
+      ...(pdd.DEFAULT_COST_SETTINGS || {}),
+      expressRules: (pdd.DEFAULT_COST_SETTINGS?.expressRules || []).map((r: any) => ({ ...r })),
+    };
+    const twoKg = pdd.calcShippingFee(2, shippingSettings, "圆通");
+    ok("rules.shipping_2kg_is_4", Math.abs(twoKg.fee - 4) < 0.01, String(twoKg.fee));
+
+    const periodOrders = [{
+      ...orders[0],
+      orderId: "M1",
+      status: "已收货",
+      merchantReceived: 200,
+      goodsTotal: 200,
+      qty: 1,
+      productId: "M1",
+      merchantSku: "MS1",
+      merchantSpu: "MP1",
+      specName: "标准",
+      shipTime: "2026-06-02",
+      expressCompany: "圆通",
+    }];
+    const periodProducts = [{
+      productCode: "MP1", productName: "item", skuCode: "MS1", specName: "标准",
+      salePrice: 200, costPrice: 0, packCost: 0, weightKg: 0.5, stock: 0,
+    }];
+    const periodBill = [
+      { orderId: "M1", time: "2026-06-01", income: 100, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+      { orderId: "OLD1", time: "2026-06-02", income: 20, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+      { orderId: "OLD1", time: "2026-06-02", income: 0, expense: 2, billType: "技术服务费", remark: "", bizDesc: "基础技术服务费" },
+      { orderId: "OLD1", time: "2026-06-02", income: 0, expense: 3, billType: "罚款", remark: "", bizDesc: "" },
+    ];
+    const periodSettings = {
+      ...(pdd.DEFAULT_COST_SETTINGS || {}),
+      adAllocateMode: "none",
+      defaultPackCost: 0,
+      firstWeightFee: 3,
+      additionalWeightFee: 1,
+      expressRules: [],
+    };
+    const period = pdd.buildOperatingReport(
+      periodOrders,
+      periodBill,
+      periodProducts,
+      [],
+      periodSettings,
+      [],
+    );
+    ok("rules.calendar_revenue_all_bill_orders", Math.abs(period.summary.confirmedRevenue - 120) < 0.01, String(period.summary.confirmedRevenue));
+    ok("rules.calendar_all_platform_fees", Math.abs(period.summary.estimatedProfitAfterAd - 112) < 0.01, String(period.summary.estimatedProfitAfterAd));
+    ok("rules.before_shipping_profit", Math.abs(period.summary.profitAfterAdBeforeShipping - 115) < 0.01, String(period.summary.profitAfterAdBeforeShipping));
+    ok("rules.margin_uses_confirmed_revenue", Math.abs(period.summary.profitMargin - (112 / 120)) < 0.0001, String(period.summary.profitMargin));
+  }
+
   // ad by_product: product-level spend allocated within same productId only
   {
     const orders2 = [

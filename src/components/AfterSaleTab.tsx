@@ -560,7 +560,7 @@ export default function AfterSaleTab({
           )}
         </div>
 
-        {result && (
+        {result && s && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
               <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">

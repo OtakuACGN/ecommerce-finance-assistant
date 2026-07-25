@@ -815,7 +815,7 @@ function App() {
     const pendingSku = report.unmatchedSkus?.length || 0;
     const bp = opCostSettings.brandPointPct || 0;
     const tech = report.summary.techFee || 0;
-    let msg = `报表已生成：毛利(扣广告) ¥${report.summary.estimatedProfitAfterAd.toFixed(2)} | 确认收入 ¥${(report.summary.confirmedRevenue ?? 0).toFixed(0)} | 全额退${fullN}/部分退${partialN} | 待补SKU ${pendingSku}`;
+    let msg = `报表已生成：自然月利润(扣广告/估算运费) ¥${report.summary.estimatedProfitAfterAd.toFixed(2)} | 未扣运费 ¥${report.summary.profitAfterAdBeforeShipping.toFixed(2)} | 确认收入 ¥${(report.summary.confirmedRevenue ?? 0).toFixed(0)} | 全额退${fullN}/部分退${partialN} | 待补SKU ${pendingSku}`;
     if (bp <= 0 && tech > 0) {
       msg += " | 平台费已扣、品牌扣点未填(可选)";
     } else if (bp > 0) {

@@ -462,7 +462,13 @@ export function buildOperatingReport(
     receivedRelatedAmount > 0 ? signedReturnAmount / receivedRelatedAmount : 0;
 
   const shipNotDealCount = orderProfits.filter((o) => o.isShipNotDeal).length;
-  const confirmedRevenue = orderProfits.reduce((s, o) => s + (o.revenue || 0), 0);
+  const orderConfirmedRevenue = orderProfits.reduce((s, o) => s + (o.revenue || 0), 0);
+  // 自然月主口径：有账务表时，确认收入取本月全部交易收入-退款+补贴；
+  // 无账务表时才回退到订单逐单确认收入。
+  const confirmedRevenue =
+    billLines.length > 0
+      ? totals.income - totals.refund + totals.subsidy
+      : orderConfirmedRevenue;
   const costTotal = orderProfits.reduce((s, o) => s + o.costTotal, 0);
   const packTotal = orderProfits.reduce((s, o) => s + o.packTotal, 0);
   const shippingTotal = orderProfits.reduce((s, o) => s + o.shippingFee, 0);
@@ -494,18 +500,18 @@ export function buildOperatingReport(
   for (const id of adPidSet) if (orderPidSet.has(id)) adIdIntersection += 1;
   const adProductIdCount = adPidSet.size;
   const adOrderProductIdCount = orderPidSet.size;
-  // 毛利阶梯：底座 → 扣退货相关 → 扣扣点税 → 扣广告
-  // 由单笔毛利反推底座，自动兼容 feeStackMode（settings_only 不扣账务 tech 等）
-  const profitOpsBase = orderProfits.reduce((s, o) => {
-    return (
-      s +
-      o.estimatedProfit +
-      o.returnLoss +
-      o.repackCost +
-      o.brandPointFee +
-      o.ecommerceTaxFee
-    );
-  }, 0);
+  // 自然月毛利底座：本月账务确认收入，扣当月订单成本/包材/估算运费，
+  // 以及本月账务中的全部平台费（不再只扣能归因到订单的部分）。
+  const periodPlatformFees =
+    (settings.feeStackMode || "both") === "settings_only"
+      ? 0
+      : totals.techFee + totals.otherFee;
+  const profitOpsBase =
+    confirmedRevenue -
+    costTotal -
+    packTotal -
+    netShippingTotal -
+    periodPlatformFees;
   const returnRelatedCost = returnLossTotal + repackCostTotal;
   // 不含损耗运费：主毛利已扣 netShipping，损耗运费仅作展示项，避免叙事重复
   const marginEatenTotal =
@@ -518,10 +524,12 @@ export function buildOperatingReport(
     .filter((o) => !o.costMatched)
     .reduce((s, o) => s + o.merchantReceived, 0);
 
-  let profitBefore = orderProfits.reduce((s, o) => s + o.estimatedProfit, 0);
-  if (orders.length === 0 && billLines.length > 0) profitBefore = totals.net;
+  const profitBefore =
+    profitOpsBase -
+    returnRelatedCost -
+    brandPointTotal -
+    ecommerceTaxTotal;
   // 汇总始终扣总广告：订单已摊 + 未摊到单的部分（none/无商品ID/未匹配推广）
-  const profitAfterOrders = orderProfits.reduce((s, o) => s + o.estimatedProfitAfterAd, 0);
   const unallocatedAd = Math.max(0, adSpend - adAllocatedTotal);
   let adMatchWarning = "";
   if (adSpendProduct > 0 && adProductIdCount > 0 && adIdIntersection === 0) {
@@ -534,8 +542,14 @@ export function buildOperatingReport(
     adMatchWarning =
       "当前按商品ID分摊，但明细分摊为0；汇总毛利已全额扣除广告花费。";
   }
-  let profitAfter = profitAfterOrders - unallocatedAd;
-  const profitMargin = merchantReceived > 0 ? profitAfter / merchantReceived : 0;
+  const profitAfter = profitBefore - adSpend;
+  const profitAfterAdBeforeShipping = profitAfter + netShippingTotal;
+  const profitMargin =
+    confirmedRevenue > 0 ? profitAfter / confirmedRevenue : 0;
+  const profitMarginBeforeShipping =
+    confirmedRevenue > 0
+      ? profitAfterAdBeforeShipping / confirmedRevenue
+      : 0;
 
   // 按月汇总 + 时段对比
   const monthMap = new Map<string, OrderProfitRow[]>();
@@ -563,6 +577,7 @@ export function buildOperatingReport(
     .map(([month, rows]) => {
       const gt = rows.reduce((s, r) => s + r.goodsTotal, 0);
       const mr = rows.reduce((s, r) => s + r.merchantReceived, 0);
+      const revenue = rows.reduce((s, r) => s + r.revenue, 0);
       const ref = rows.filter((r) => r.isRefunded);
       const shipped = rows.filter((r) => r.isShipped);
       const psr = rows.filter((r) => r.isPostShipRefund);
@@ -594,7 +609,7 @@ export function buildOperatingReport(
         netShippingTotal: rows.reduce((s, r) => s + r.netShipping, 0),
         profitBeforeAd: pb,
         profitAfterAd: pa,
-        profitMargin: mr > 0 ? pa / mr : 0,
+        profitMargin: revenue > 0 ? pa / revenue : 0,
         adAllocated: monthAdCost,
       };
     });
@@ -612,6 +627,7 @@ export function buildOperatingReport(
     goodsTotal,
     merchantReceived,
     confirmedRevenue,
+    orderConfirmedRevenue,
     buyerPaid,
     refundOrderCount,
     refundOrderAmount,
@@ -687,6 +703,8 @@ export function buildOperatingReport(
     adAllocatedTotal,
     estimatedProfitBeforeAd: profitBefore,
     estimatedProfitAfterAd: profitAfter,
+    profitAfterAdBeforeShipping,
+    profitMarginBeforeShipping,
     profitMargin,
     months,
     latestMonth,
@@ -760,7 +778,8 @@ export function buildOperatingReport(
     ["商品总价合计", summary.goodsTotal.toFixed(2)],
     ["用户实付合计", summary.buyerPaid.toFixed(2)],
     ["商家实收合计", summary.merchantReceived.toFixed(2)],
-    ["确认收入合计(含部分退保留)", summary.confirmedRevenue.toFixed(2)],
+    ["确认收入合计(自然月账务收入-退款+补贴)", summary.confirmedRevenue.toFixed(2)],
+    ["订单逐单确认收入(对照)", summary.orderConfirmedRevenue.toFixed(2)],
     [
       "账务平台费进毛利",
       settings.feeStackMode === "settings_only" ? "否(仅展示)" : "是",
@@ -818,10 +837,10 @@ export function buildOperatingReport(
     ["成本未匹配订单", summary.costUnmatchedOrders],
     ["账单交易收入", summary.billIncome.toFixed(2)],
     ["账单退款", summary.billRefund.toFixed(2)],
-    ["账务技术服务费合计(净)", summary.techFee.toFixed(2)],
-    ["进毛利·技术服务费(订单归因)", (summary.techFeeAttributed ?? 0).toFixed(2)],
-    ["账务其他费用合计", summary.otherFee.toFixed(2)],
-    ["进毛利·其他费用(订单归因)", (summary.otherFeeAttributed ?? 0).toFixed(2)],
+    ["进自然月毛利·账务技术服务费合计(净)", summary.techFee.toFixed(2)],
+    ["其中可归因订单·技术服务费", (summary.techFeeAttributed ?? 0).toFixed(2)],
+    ["进自然月毛利·账务其他费用合计", summary.otherFee.toFixed(2)],
+    ["其中可归因订单·其他费用", (summary.otherFeeAttributed ?? 0).toFixed(2)],
     ["补贴", summary.subsidy.toFixed(2)],
     ["广告花费(商品推广优先,否则分天合计)", summary.adSpend.toFixed(2)],
     ["广告交易额(推广日报)", summary.adGmv.toFixed(2)],
@@ -835,9 +854,11 @@ export function buildOperatingReport(
     ["广告商品ID交集", summary.adIdIntersection ?? 0],
     ["广告匹配提示", summary.adMatchWarning || "-"],
     ["广告分摊方式", settings.adAllocateMode || "by_product"],
-    ["毛利(未扣广告)", summary.estimatedProfitBeforeAd.toFixed(2)],
-    ["毛利(扣广告)", summary.estimatedProfitAfterAd.toFixed(2)],
-    ["毛利率", pct(summary.profitMargin)],
+    ["自然月利润(未扣广告,已扣估算运费)", summary.estimatedProfitBeforeAd.toFixed(2)],
+    ["自然月利润(扣广告,已扣估算运费)", summary.estimatedProfitAfterAd.toFixed(2)],
+    ["自然月利润(扣广告,未扣运费)", summary.profitAfterAdBeforeShipping.toFixed(2)],
+    ["实际快递费回填公式", "未扣运费利润 - 实际快递账单净运费"],
+    ["利润率(扣广告利润/确认收入)", pct(summary.profitMargin)],
     ["对比月份", `${summary.prevMonth || "-"} → ${summary.latestMonth || "-"}`],
   ];
 
@@ -1874,7 +1895,8 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     ["统计订单数", summary.orderCount],
     ["GMV(商品总价)", summary.goodsTotal.toFixed(2)],
     ["商家实收", summary.merchantReceived.toFixed(2)],
-    ["确认收入", summary.confirmedRevenue.toFixed(2)],
+    ["确认收入(自然月账务口径)", summary.confirmedRevenue.toFixed(2)],
+    ["订单逐单确认收入(对照)", summary.orderConfirmedRevenue.toFixed(2)],
     ["总退款率(笔/额)", `${pct(summary.refundRateByCount)} / ${pct(summary.refundRateByAmount)}`],
     [
       "全额退 / 部分退",
@@ -1914,9 +1936,11 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     ["经营底座毛利", summary.profitOpsBase.toFixed(2)],
     ["退货相关吃掉", summary.returnRelatedCost.toFixed(2)],
     ["广告+扣点税+退货相关合计吃掉", summary.marginEatenTotal.toFixed(2)],
-    ["毛利(未扣广告)", summary.estimatedProfitBeforeAd.toFixed(2)],
-    ["毛利(扣广告)", summary.estimatedProfitAfterAd.toFixed(2)],
-    ["毛利率(扣广告)", pct(summary.profitMargin)],
+    ["自然月利润(未扣广告,已扣估算运费)", summary.estimatedProfitBeforeAd.toFixed(2)],
+    ["自然月利润(扣广告,已扣估算运费)", summary.estimatedProfitAfterAd.toFixed(2)],
+    ["自然月利润(扣广告,未扣运费)", summary.profitAfterAdBeforeShipping.toFixed(2)],
+    ["实际快递费回填", "未扣运费利润 - 实际快递账单净运费"],
+    ["利润率(扣广告利润/确认收入)", pct(summary.profitMargin)],
     ["待补成本SKU数", unmatchedSkus.length],
     ["待补成本订单数", summary.costUnmatchedOrders],
     ["— Top亏规格 —", ""],

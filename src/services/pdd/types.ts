@@ -180,18 +180,18 @@ export interface ShopFeeOverride {
 }
 
 export const DEFAULT_EXPRESS_RULES: ExpressShipRule[] = [
-  { label: "圆通", keywords: "圆通,YTO,yto", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 2 },
-  { label: "邮政", keywords: "邮政,EMS,邮政快递,youzheng", firstWeightKg: 1, firstWeightFee: 3.5, additionalWeightKg: 1, additionalWeightFee: 2.5 },
-  { label: "中通", keywords: "中通,ZTO,zto", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 2 },
-  { label: "韵达", keywords: "韵达,YUNDA,yunda", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 2 },
-  { label: "申通", keywords: "申通,STO,sto", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 2 },
+  { label: "圆通", keywords: "圆通,YTO,yto", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 1 },
+  { label: "邮政", keywords: "邮政,EMS,邮政快递,youzheng", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 1 },
+  { label: "中通", keywords: "中通,ZTO,zto", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 1 },
+  { label: "韵达", keywords: "韵达,YUNDA,yunda", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 1 },
+  { label: "申通", keywords: "申通,STO,sto", firstWeightKg: 1, firstWeightFee: 3, additionalWeightKg: 1, additionalWeightFee: 1 },
 ];
 
 export const DEFAULT_COST_SETTINGS: CostSettings = {
   firstWeightKg: 1,
   firstWeightFee: 3,
   additionalWeightKg: 1,
-  additionalWeightFee: 2,
+  additionalWeightFee: 1,
   defaultPackCost: 0.3,
   forceDefaultPack: false,
   defaultWeightKg: 0.5,
@@ -270,7 +270,7 @@ export const COST_SETTING_TEMPLATES: CostSettingsTemplate[] = [
       firstWeightKg: 1,
       firstWeightFee: 3,
       additionalWeightKg: 1,
-      additionalWeightFee: 2,
+      additionalWeightFee: 1,
       defaultPackCost: 0.3,
       defaultWeightKg: 0.5,
       expressRules: DEFAULT_EXPRESS_RULES.map((r) => ({ ...r })),
@@ -364,6 +364,8 @@ export interface OperatingSummary {
   merchantReceived: number;
   /** 确认收入合计（部分退后的有效收入） */
   confirmedRevenue: number;
+  /** 订单逐单确认收入；用于和自然月账务收入桥接 */
+  orderConfirmedRevenue: number;
   buyerPaid: number;
   refundOrderCount: number;
   refundOrderAmount: number;
@@ -472,6 +474,9 @@ export interface OperatingSummary {
   adAllocatedTotal: number;
   estimatedProfitBeforeAd: number;
   estimatedProfitAfterAd: number;
+  /** 已扣广告、尚未扣估算净运费；减实际快递账单即可得到实际运费口径利润 */
+  profitAfterAdBeforeShipping: number;
+  profitMarginBeforeShipping: number;
   profitMargin: number;
   months: MonthMetrics[];
   latestMonth?: string;

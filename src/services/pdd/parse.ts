@@ -212,7 +212,7 @@ export function parsePddBillLines(fileData: FileData): PddBillLine[] {
 
   return data.data.slice(1).map((row) => ({
     orderId: cell(row, orderCol),
-    time: cell(row, timeCol),
+    time: cellTime(row, timeCol),
     income: toNum(cell(row, incomeCol)),
     expense: Math.abs(toNum(cell(row, expenseCol))),
     billType: cell(row, typeCol),
