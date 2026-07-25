@@ -1216,6 +1216,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     orderCount: number;
     goodsTotal: number;
     merchantReceived: number;
+    confirmedRevenue: number;
     refundCount: number;
     postShipRefundCount: number;
     shippedCount: number;
@@ -1235,6 +1236,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     orderCount: 0,
     goodsTotal: 0,
     merchantReceived: 0,
+    confirmedRevenue: 0,
     refundCount: 0,
     postShipRefundCount: 0,
     shippedCount: 0,
@@ -1258,6 +1260,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     a.orderCount += 1;
     a.goodsTotal += o.goodsTotal;
     a.merchantReceived += o.merchantReceived;
+    a.confirmedRevenue += o.revenue;
     if (o.isRefunded) a.refundCount += 1;
     if (o.isPostShipRefund) a.postShipRefundCount += 1;
     if (o.isShipped) a.shippedCount += 1;
@@ -1280,7 +1283,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
       "店铺/账号",
       "订单数",
       "商品总价",
-      "商家实收",
+      "确认收入",
       "退款率(笔)",
       "发货后退款率(笔)",
       "损耗运费",
@@ -1295,17 +1298,18 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
       "未匹配成本单",
     ],
     ...Array.from(shopMap.entries())
-      .sort((a, b) => b[1].merchantReceived - a[1].merchantReceived)
+      .sort((a, b) => b[1].confirmedRevenue - a[1].confirmedRevenue)
       .map(([shop, a]) => {
         const adShop = adSpendByShop.get(shop) || (useGlobalAd && shopMap.size === 1 ? adSpend : 0);
         const refundRate = a.orderCount ? a.refundCount / a.orderCount : 0;
         const psr = a.shippedCount ? a.postShipRefundCount / a.shippedCount : 0;
-        const margin = a.merchantReceived > 0 ? a.profitBefore / a.merchantReceived : 0;
+        const margin =
+          a.confirmedRevenue > 0 ? a.profitBefore / a.confirmedRevenue : null;
         return [
           shop,
           a.orderCount,
           a.goodsTotal.toFixed(2),
-          a.merchantReceived.toFixed(2),
+          a.confirmedRevenue.toFixed(2),
           pct(refundRate),
           pct(psr),
           a.shippingLoss.toFixed(2),
@@ -1316,7 +1320,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
           a.repackCost.toFixed(2),
           adShop.toFixed(2),
           a.profitBefore.toFixed(2),
-          pct(margin),
+          margin == null ? "-" : pct(margin),
           a.unmatched,
         ];
       }),
@@ -1350,6 +1354,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
   const spuMap = new Map<string, RankAgg>();
   const skuMap = new Map<string, RankAgg>();
   for (const o of orderProfits) {
+    if (/已取消/.test(String(o.status || ""))) continue;
     const spuKey =
       o.merchantSpu ||
       o.productId ||
@@ -1365,6 +1370,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     spu.qty += o.qty;
     spu.goodsTotal += o.goodsTotal;
     spu.merchantReceived += o.merchantReceived;
+    spu.confirmedRevenue += o.revenue;
     if (o.isRefunded) spu.refundCount += 1;
     if (o.isPostShipRefund) spu.postShipRefundCount += 1;
     if (o.isShipped) spu.shippedCount += 1;
@@ -1383,8 +1389,9 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
 
     const skuKey =
       o.merchantSku ||
-      `${o.productName}||${o.specName}` ||
-      o.orderId;
+      (o.productName || o.specName
+        ? `${o.productName}||${o.specName}`
+        : o.orderId);
     const sku = skuMap.get(skuKey) || emptyRank({
       label: skuKey,
       productName: o.productName,
@@ -1397,6 +1404,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     sku.qty += o.qty;
     sku.goodsTotal += o.goodsTotal;
     sku.merchantReceived += o.merchantReceived;
+    sku.confirmedRevenue += o.revenue;
     if (o.isRefunded) sku.refundCount += 1;
     if (o.isPostShipRefund) sku.postShipRefundCount += 1;
     if (o.isShipped) sku.shippedCount += 1;
@@ -1441,7 +1449,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
             "订单数",
             "件数",
             "商品总价",
-            "结算金额",
+            "确认收入",
             "退款率(笔)",
             "成本",
             "包材",
@@ -1463,7 +1471,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
             "订单数",
             "件数",
             "商品总价",
-            "结算金额",
+            "确认收入",
             "退款率(笔)",
             "成本",
             "包材",
@@ -1482,7 +1490,9 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
         const profitForMargin =
           kind === "spu" ? profitAfterProductAd : a.profitBefore;
         const margin =
-          a.merchantReceived > 0 ? profitForMargin / a.merchantReceived : 0;
+          a.confirmedRevenue > 0
+            ? profitForMargin / a.confirmedRevenue
+            : null;
         if (kind === "spu") {
           return [
             idx + 1,
@@ -1493,7 +1503,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
             a.orderCount,
             a.qty,
             a.goodsTotal.toFixed(2),
-            a.merchantReceived.toFixed(2),
+            a.confirmedRevenue.toFixed(2),
             pct(refundRate),
             a.costTotal.toFixed(2),
             a.packTotal.toFixed(2),
@@ -1502,7 +1512,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
             (a.productAdSpend || 0).toFixed(2),
             a.profitBefore.toFixed(2),
             profitAfterProductAd.toFixed(2),
-            pct(margin),
+            margin == null ? "-" : pct(margin),
             a.unmatched,
           ];
         }
@@ -1516,14 +1526,14 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
           a.orderCount,
           a.qty,
           a.goodsTotal.toFixed(2),
-          a.merchantReceived.toFixed(2),
+          a.confirmedRevenue.toFixed(2),
           pct(refundRate),
           a.costTotal.toFixed(2),
           a.packTotal.toFixed(2),
           a.netShipping.toFixed(2),
           a.shippingLoss.toFixed(2),
           a.profitBefore.toFixed(2),
-          pct(margin),
+          margin == null ? "-" : pct(margin),
           a.unmatched,
         ];
       }),
@@ -1533,7 +1543,8 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
   const spuTable = rankRows(spuMap, "spu");
   const skuTable = rankRows(skuMap, "sku");
 
-  // 销售排行：结算金额=商家实收；商品广告费按商品ID真实匹配（非均摊）。
+  // 销售排行：确认收入=账务收入-退款+补贴；取消订单不进入排行。
+  // 商品广告费按商品ID真实匹配（非均摊）。
   // 编码销售可扣商品广告；规格销售不拆商品广告。
   const hasProductAds = adSpendProduct > 0.005;
   const salesRankFrom = (map: Map<string, RankAgg>, kind: "spu" | "sku") => {
@@ -1553,7 +1564,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
               "订单数",
               "销量",
               "商品总价",
-              "结算金额",
+              "确认收入",
               "退款订单",
               "退款率(笔)",
               "商品广告费",
@@ -1569,7 +1580,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
               "订单数",
               "销量",
               "商品总价",
-              "结算金额",
+              "确认收入",
               "退款订单",
               "退款率(笔)",
               "毛利",
@@ -1585,7 +1596,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
             "订单数",
             "销量",
             "商品总价",
-            "结算金额",
+            "确认收入",
             "退款订单",
             "退款率(笔)",
             "毛利",
@@ -1599,7 +1610,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
         const marginBase =
           kind === "spu" && hasProductAds ? afterAd : a.profitBefore;
         const margin =
-          a.merchantReceived > 0 ? marginBase / a.merchantReceived : 0;
+          a.confirmedRevenue > 0 ? marginBase / a.confirmedRevenue : null;
         if (kind === "spu") {
           if (hasProductAds) {
             return [
@@ -1610,13 +1621,13 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
               a.orderCount,
               a.qty,
               a.goodsTotal.toFixed(2),
-              a.merchantReceived.toFixed(2),
+              a.confirmedRevenue.toFixed(2),
               a.refundCount,
               pct(refundRate),
               (a.productAdSpend || 0).toFixed(2),
               a.profitBefore.toFixed(2),
               afterAd.toFixed(2),
-              pct(margin),
+              margin == null ? "-" : pct(margin),
             ];
           }
           return [
@@ -1627,11 +1638,11 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
             a.orderCount,
             a.qty,
             a.goodsTotal.toFixed(2),
-            a.merchantReceived.toFixed(2),
+            a.confirmedRevenue.toFixed(2),
             a.refundCount,
             pct(refundRate),
             a.profitBefore.toFixed(2),
-            pct(margin),
+            margin == null ? "-" : pct(margin),
           ];
         }
         return [
@@ -1644,11 +1655,11 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
           a.orderCount,
           a.qty,
           a.goodsTotal.toFixed(2),
-          a.merchantReceived.toFixed(2),
+          a.confirmedRevenue.toFixed(2),
           a.refundCount,
           pct(refundRate),
           a.profitBefore.toFixed(2),
-          pct(margin),
+          margin == null ? "-" : pct(margin),
         ];
       }),
     ];

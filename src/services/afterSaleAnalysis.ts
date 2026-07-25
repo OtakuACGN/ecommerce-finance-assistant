@@ -291,7 +291,7 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
   const iAgreeRf = findCol(headers, ["确认时间", "同意退款时间"]);
   const iAgreeRfBy = findCol(headers, ["创建人", "同意退款人"]);
   const iIntercept = findCol(headers, ["拦截状态", "快递拦截状态"]);
-  const iSku = findCol(headers, ["规格名称", "sku信息", "SKU信息"]);
+  const iSku = findCol(headers, ["商品规格", "规格名称", "sku信息", "SKU信息", "规格"]);
   const iCode = findCol(headers, ["规格编码", "商家编码"]);
   const iPName = findCol(headers, ["商品名称"]);
   const iTag = findCol(headers, ["订单标记"]);
@@ -405,7 +405,7 @@ export function parseOrderBaseFile(data: any[][]): OrderBaseRow[] {
   const iQty = findCol(headers, ["商品数量(件)", "商品数量", "数量"]);
   const iAs = findCol(headers, ["售后状态"]);
   const iOst = findCol(headers, ["订单状态"]);
-  const map = new Map<string, OrderBaseRow>();
+  const out: OrderBaseRow[] = [];
   for (let r = headerIdx + 1; r < data.length; r++) {
     const row = data[r] || [];
     const orderId = normOrderId(cell(row, iOrder));
@@ -417,17 +417,15 @@ export function parseOrderBaseFile(data: any[][]): OrderBaseRow[] {
       qty: parseNum(row[iQty]) || 1, afterSaleStatus: cell(row, iAs),
       orderStatus: cell(row, iOst),
     };
-    const exist = map.get(orderId);
-    if (!exist) { map.set(orderId, piece); continue; }
-    exist.goodsTotal += piece.goodsTotal;
-    exist.received += piece.received;
-    exist.qty += piece.qty;
+    // 保留订单内的 SKU 明细。订单维度汇总在分析阶段单独完成，
+    // 否则多 SKU 订单会全部落到第一条规格，导致 SKU 售后率分母失真。
+    out.push(piece);
   }
-  return Array.from(map.values());
+  return out;
 }
 
 export function orderBaseFromPddOrders(orders: PddOrder[]): OrderBaseRow[] {
-  const map = new Map<string, OrderBaseRow>();
+  const out: OrderBaseRow[] = [];
   for (const o of orders || []) {
     const orderId = normOrderId(o.orderId);
     if (!orderId) continue;
@@ -437,19 +435,40 @@ export function orderBaseFromPddOrders(orders: PddOrder[]): OrderBaseRow[] {
       goodsTotal: o.goodsTotal || 0, received: o.merchantReceived || 0,
       qty: o.qty || 1, afterSaleStatus: o.afterSale || "", orderStatus: o.status || "",
     };
-    const exist = map.get(orderId);
-    if (!exist) { map.set(orderId, piece); continue; }
-    exist.goodsTotal += piece.goodsTotal;
-    exist.received += piece.received;
-    exist.qty += piece.qty;
+    out.push(piece);
   }
-  return Array.from(map.values());
+  return out;
 }
 
 
 
 function enrichWithOrders(rows: AfterSaleRow[], orders: OrderBaseRow[]): AfterSaleRow[] {
-  const map = new Map(orders.map((o) => [o.orderId, o]));
+  const grouped = new Map<string, OrderBaseRow[]>();
+  for (const order of orders) {
+    const list = grouped.get(order.orderId) || [];
+    list.push(order);
+    grouped.set(order.orderId, list);
+  }
+  const map = new Map<string, OrderBaseRow>();
+  for (const [orderId, lines] of grouped) {
+    const first = lines[0];
+    const allSameProduct = lines.every((line) =>
+      (line.productId || line.productName) === (first.productId || first.productName),
+    );
+    const allSameSku = lines.every((line) =>
+      (line.specName || line.merchantSku) === (first.specName || first.merchantSku),
+    );
+    map.set(orderId, {
+      ...first,
+      productId: allSameProduct ? first.productId : "",
+      productName: allSameProduct ? first.productName : "",
+      specName: allSameSku ? first.specName : "",
+      merchantSku: allSameSku ? first.merchantSku : "",
+      goodsTotal: lines.reduce((sum, line) => sum + (line.goodsTotal || 0), 0),
+      received: lines.reduce((sum, line) => sum + (line.received || 0), 0),
+      qty: lines.reduce((sum, line) => sum + (line.qty || 0), 0),
+    });
+  }
   return rows.map((r) => {
     const o = map.get(r.orderId);
     if (!o) {
@@ -523,13 +542,27 @@ function rankByName(
 }
 
 function buildSkuRank(rows: AfterSaleRow[], orders: OrderBaseRow[], mode: "sku" | "product"): AfterSaleSkuStat[] {
-  const orderAgg = new Map<string, { count: number; gmv: number; productName: string; merchantSku: string; productId: string }>();
+  const orderAgg = new Map<string, {
+    orderIds: Set<string>;
+    gmv: number;
+    productName: string;
+    merchantSku: string;
+    productId: string;
+  }>();
   for (const o of orders) {
     const key = mode === "product"
       ? o.productId || o.productName || "未知商品"
       : `${o.productId || ""}||${o.specName || o.merchantSku || "未知规格"}`;
-    const cur = orderAgg.get(key) || { count: 0, gmv: 0, productName: o.productName, merchantSku: o.merchantSku, productId: o.productId };
-    cur.count += 1; cur.gmv += o.goodsTotal || 0; orderAgg.set(key, cur);
+    const cur = orderAgg.get(key) || {
+      orderIds: new Set<string>(),
+      gmv: 0,
+      productName: o.productName,
+      merchantSku: o.merchantSku,
+      productId: o.productId,
+    };
+    cur.orderIds.add(o.orderId);
+    cur.gmv += o.goodsTotal || 0;
+    orderAgg.set(key, cur);
   }
   const map = new Map<string, AfterSaleSkuStat>();
   for (const r of rows) {
@@ -554,7 +587,7 @@ function buildSkuRank(rows: AfterSaleRow[], orders: OrderBaseRow[], mode: "sku" 
   return Array.from(map.values())
     .map((s) => {
       const ob = orderAgg.get(s.key);
-      const orderCount = ob?.count || 0;
+      const orderCount = ob?.orderIds.size || 0;
       const orderGmv = ob?.gmv || 0;
       return {
         ...s,
@@ -582,7 +615,7 @@ export function analyzeAfterSales(
   const tradeAmountTotal = rows.reduce((s, r) => s + (r.tradeAmount || 0), 0);
   const successRefundAmount = successRows.reduce((s, r) => s + (r.refundAmount || 0), 0);
   const successTradeAmount = successRows.reduce((s, r) => s + (r.tradeAmount || 0), 0);
-  const orderBaseCount = orders.length;
+  const orderBaseCount = new Set(orders.map((o) => o.orderId).filter(Boolean)).size;
   const orderBaseGmv = orders.reduce((s, o) => s + (o.goodsTotal || 0), 0);
   const successOrderIds = new Set(successRows.map((r) => r.orderId).filter(Boolean));
   const partialRows = successRows.filter((r) => r.scope === "partial");
@@ -598,7 +631,12 @@ export function analyzeAfterSales(
     success: successRows.length,
     revoked: rows.filter((r) => r.isRevoked).length,
     failed: rows.filter((r) => r.isFailed).length,
-    processing: rows.filter((r) => !r.isSuccess && !r.isRevoked && !r.isFailed && /处理|待|中/.test(r.status)).length,
+    processing: rows.filter((r) =>
+      !r.isSuccess
+      && !r.isRevoked
+      && !r.isFailed
+      && /处理|待|中/.test(`${r.status || ""} ${r.platformStatus || ""}`),
+    ).length,
     beforeShip: rows.filter((r) => r.stage === "before_ship").length,
     afterShip: rows.filter((r) => r.stage === "after_ship").length,
     stageUnknown: rows.filter((r) => r.stage === "unknown").length,
@@ -659,34 +697,22 @@ export function parseAndAnalyzeAfterSales(
   options?: { orderFile?: FileData | null; opOrders?: PddOrder[]; useOpOrders?: boolean },
 ): AfterSaleResult {
   const afterRows = parseAfterSaleFile(afterFile.data);
-  const parts: OrderBaseRow[][] = [];
+  let orders: OrderBaseRow[] = [];
   const labels: string[] = [];
   if (options?.orderFile?.data?.length) {
-    parts.push(parseOrderBaseFile(options.orderFile.data));
+    orders = parseOrderBaseFile(options.orderFile.data);
     labels.push(options.orderFile.name || "订单导出");
-  }
-  if (options?.useOpOrders !== false && options?.opOrders?.length) {
+  } else if (options?.useOpOrders !== false && options?.opOrders?.length) {
     const fromOp = orderBaseFromPddOrders(options.opOrders);
     if (fromOp.length) {
-      parts.push(fromOp);
+      orders = fromOp;
       labels.push(`经营分析订单(${fromOp.length})`);
     }
   }
-  const orderMap = new Map<string, OrderBaseRow>();
-  for (const list of parts) {
-    for (const o of list) {
-      const prev = orderMap.get(o.orderId);
-      if (!prev) { orderMap.set(o.orderId, { ...o }); continue; }
-      if (!prev.productName && o.productName) prev.productName = o.productName;
-      if (!prev.specName && o.specName) prev.specName = o.specName;
-      if (!prev.merchantSku && o.merchantSku) prev.merchantSku = o.merchantSku;
-      if (!prev.productId && o.productId) prev.productId = o.productId;
-      if (!prev.goodsTotal && o.goodsTotal) prev.goodsTotal = o.goodsTotal;
-      if (!prev.received && o.received) prev.received = o.received;
-    }
-  }
   return analyzeAfterSales(afterRows, {
-    orders: Array.from(orderMap.values()),
+    // 显式订单文件优先于经营分析订单，避免同一来源重复叠加；
+    // 同时保留订单文件内的多 SKU 明细。
+    orders,
     afterFileName: afterFile.name,
     orderSourceLabel: labels.join(" + "),
   });
@@ -696,7 +722,14 @@ export function filterAfterSaleRows(rows: AfterSaleRow[], filter: AfterSaleFilte
   if (filter === "success") return rows.filter((r) => r.isSuccess);
   if (filter === "revoked") return rows.filter((r) => r.isRevoked);
   if (filter === "failed") return rows.filter((r) => r.isFailed);
-  if (filter === "processing") return rows.filter((r) => !r.isSuccess && !r.isRevoked && !r.isFailed && /处理|待|中/.test(r.status));
+  if (filter === "processing") {
+    return rows.filter((r) =>
+      !r.isSuccess
+      && !r.isRevoked
+      && !r.isFailed
+      && /处理|待|中/.test(`${r.status || ""} ${r.platformStatus || ""}`),
+    );
+  }
   if (filter === "beforeShip") return rows.filter((r) => r.stage === "before_ship");
   if (filter === "afterShip") return rows.filter((r) => r.stage === "after_ship");
   if (filter === "partial") return rows.filter((r) => r.scope === "partial" && r.isSuccess);

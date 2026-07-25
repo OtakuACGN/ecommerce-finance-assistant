@@ -64,6 +64,7 @@ export default function BillTab(props: BillTabProps) {
     拼多多: "bg-yellow-100 text-yellow-700",
   };
   const color = (p: string) => platformColor[p] || "bg-gray-100 text-gray-700";
+  const amount = (value: number | undefined) => Number(value || 0);
   const reportError = onError;
 
   // body injected below uses original names via aliases
@@ -156,10 +157,12 @@ export default function BillTab(props: BillTabProps) {
                         "平台",
                         "文件名",
                         "账期",
-                        "账单金额",
+                        "交易收入",
                         "订单数",
+                        "退款",
                         "佣金",
                         "技术服务费",
+                        "其他费用",
                         "补贴",
                         "净收款",
                         "操作",
@@ -195,11 +198,17 @@ export default function BillTab(props: BillTabProps) {
                         <td className="px-4 py-2.5 text-right text-gray-500">
                           {b.orderCount}
                         </td>
+                        <td className="px-4 py-2.5 text-right text-rose-600">
+                          -¥{amount(b.refundAmount).toFixed(0)}
+                        </td>
                         <td className="px-4 py-2.5 text-right text-red-600">
                           -¥{b.commission.toFixed(0)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-orange-600">
                           -¥{b.techFee.toFixed(0)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-amber-700">
+                          -¥{amount(b.otherFee).toFixed(0)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-green-600">
                           +¥{b.subsidy.toFixed(0)}
@@ -231,7 +240,7 @@ export default function BillTab(props: BillTabProps) {
                           className="px-4 py-2.5 text-xs text-gray-500"
                           colSpan={3}
                         >
-                          合计 ({billRecords.length}个平台)
+                          合计（{billRecords.length} 份账单）
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           ¥
@@ -241,6 +250,12 @@ export default function BillTab(props: BillTabProps) {
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           {billRecords.reduce((s, b) => s + b.orderCount, 0)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-rose-600">
+                          -¥
+                          {billRecords
+                            .reduce((s, b) => s + amount(b.refundAmount), 0)
+                            .toFixed(0)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-red-600">
                           -¥
@@ -252,6 +267,12 @@ export default function BillTab(props: BillTabProps) {
                           -¥
                           {billRecords
                             .reduce((s, b) => s + b.techFee, 0)
+                            .toFixed(0)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-amber-700">
+                          -¥
+                          {billRecords
+                            .reduce((s, b) => s + amount(b.otherFee), 0)
                             .toFixed(0)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-green-600">
@@ -530,9 +551,15 @@ export default function BillTab(props: BillTabProps) {
           <div className="flex-1 overflow-auto p-4">
             <div className="mb-4 flex gap-4 text-sm flex-wrap">
               <div className="bg-gray-50 rounded-lg px-4 py-2 text-center">
-                <div className="text-xs text-gray-500">账单金额</div>
+                <div className="text-xs text-gray-500">交易收入</div>
                 <div className="font-bold text-lg">
                   ¥{showBillDetail.totalAmount.toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-rose-50 rounded-lg px-4 py-2 text-center">
+                <div className="text-xs text-gray-500">退款</div>
+                <div className="font-bold text-lg text-rose-600">
+                  -¥{amount(showBillDetail.refundAmount).toFixed(2)}
                 </div>
               </div>
               <div className="bg-red-50 rounded-lg px-4 py-2 text-center">
@@ -545,6 +572,12 @@ export default function BillTab(props: BillTabProps) {
                 <div className="text-xs text-gray-500">技术服务费</div>
                 <div className="font-bold text-lg text-orange-600">
                   -¥{showBillDetail.techFee.toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-amber-50 rounded-lg px-4 py-2 text-center">
+                <div className="text-xs text-gray-500">其他费用</div>
+                <div className="font-bold text-lg text-amber-700">
+                  -¥{amount(showBillDetail.otherFee).toFixed(2)}
                 </div>
               </div>
               <div className="bg-green-50 rounded-lg px-4 py-2 text-center">

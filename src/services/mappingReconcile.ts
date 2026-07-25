@@ -9,38 +9,13 @@ import {
   reconcileOrderPayments,
 } from "./pddBusiness";
 import type { FileData } from "../utils/excel";
+import { applySkuMappingRows } from "./skuMapping";
 
 export function applySkuMappingsToTable(
   source: any[][],
   skuMappings: SKUMapping[],
 ): any[][] {
-  if (!source.length) return [];
-  const headers = source[0] || [];
-  const dataRows = source.slice(1);
-  const internalCodeIdx = headers.findIndex(
-    (h) => String(h ?? "").trim() === "内部编码",
-  );
-  const mappedRows = dataRows.map((row) => {
-    const newRow = [...row];
-    let internalCode = internalCodeIdx >= 0
-      ? String(newRow[internalCodeIdx] ?? "").trim()
-      : "";
-    for (let i = 0; i < newRow.length; i++) {
-      const cell = String(newRow[i] || "").trim();
-      const mapping = skuMappings.find((m) => m.platformName === cell);
-      if (mapping) {
-        internalCode = mapping.internalCode;
-        break;
-      }
-    }
-    if (internalCodeIdx >= 0) newRow[internalCodeIdx] = internalCode;
-    else newRow.push(internalCode);
-    return newRow;
-  });
-  return [
-    internalCodeIdx >= 0 ? [...headers] : [...headers, "内部编码"],
-    ...mappedRows,
-  ];
+  return applySkuMappingRows(source, skuMappings);
 }
 
 export function resolveMappingSourceTable(

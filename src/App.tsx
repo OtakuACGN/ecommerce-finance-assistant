@@ -78,6 +78,7 @@ import {
   analyzeProductMasterState,
   type ProductMasterMeta,
 } from "./services/productMasterMeta";
+import { replaceBillRecordSource } from "./services/billRecords";
 import OperatingActionBar from "./components/OperatingActionBar";
 import { useBillRefundHandlers } from "./hooks/useBillRefundHandlers";
 import { useMappingReconcileHandlers } from "./hooks/useMappingReconcileHandlers";
@@ -429,17 +430,12 @@ function App() {
               const operatingBillRecord = {
                 ...ingested.billRecord,
                 fileName: `${shop} · ${ingested.billRecord.fileName}`,
+                sourceName: fileData.name,
+                shopName: shop,
               };
-              setBillRecords((prev) => [
-                ...prev.filter(
-                  (record) =>
-                    !(
-                      record.fileName === operatingBillRecord.fileName &&
-                      record.platform === operatingBillRecord.platform
-                    ),
-                ),
-                operatingBillRecord,
-              ]);
+              setBillRecords((prev) =>
+                replaceBillRecordSource(prev, operatingBillRecord),
+              );
             }
             pushOpSource(kind, fileData.name, stamped.length, shop);
             stats.bill += stamped.length;
@@ -1324,10 +1320,7 @@ function App() {
       },
       opBillLines,
     );
-    setBillRecords((prev) => {
-      const rest = prev.filter((b) => b.fileName !== "经营分析账务");
-      return [...rest, record];
-    });
+    setBillRecords((prev) => replaceBillRecordSource(prev, record));
     showToast(
       `已从经营分析同步账务：${opBillLines.length} 行 · ${record.date} · ${record.orderCount} 单`,
       "success",
@@ -1369,7 +1362,6 @@ const {
   } = useBillRefundHandlers({
     billRecords,
     setBillRecords,
-    setOpBillLines,
     commissionDetails,
     setCommissionDetails,
     refundRecords,
@@ -1934,28 +1926,6 @@ const {
       {activeTab === "salesRank" && (
         <SalesRankTab
           opReport={opReport}
-          currentData={currentData}
-          currentHeaders={currentHeaders}
-          onShowSkuRank={() => {
-            setActiveTab("operating");
-            handleShowOperatingView("salesRankSku");
-          }}
-          onShowSpuRank={() => {
-            setActiveTab("operating");
-            handleShowOperatingView("salesRankSpu");
-          }}
-          onShowSkuTable={() => {
-            if (!opReport) return;
-            const t = opReport.salesRankSkuTable || [];
-            setCurrentData(t);
-            setCurrentHeaders(t[0] || []);
-          }}
-          onShowSpuTable={() => {
-            if (!opReport) return;
-            const t = opReport.salesRankSpuTable || [];
-            setCurrentData(t);
-            setCurrentHeaders(t[0] || []);
-          }}
           onGoOperating={() => setActiveTab("operating")}
         />
       )}

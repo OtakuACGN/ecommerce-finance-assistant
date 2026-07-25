@@ -1157,7 +1157,9 @@ export function parseCourierBill(data: any[][]): CourierBillRow[] {
 
       const old = out[prev];
 
-      old.weight += item.weight;
+      // 同一运单可能按“基础运费/附加费”等拆成多条账单行；
+      // 重量是包裹属性，应取账单行中的最大有效值，不能像费用一样累加。
+      old.weight = Math.max(old.weight, item.weight);
 
       old.faceFee += item.faceFee;
 

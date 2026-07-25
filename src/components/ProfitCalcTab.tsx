@@ -5,6 +5,7 @@ import {
   calcAll,
   emptySku,
   newSkuId,
+  sanitizeProfitParams,
   skusFromProductMaster,
   type ProfitModelParams,
   type ProfitSkuInput,
@@ -102,7 +103,7 @@ export default function ProfitCalcTab({
 }: ProfitCalcTabProps) {
   const stored = useMemo(() => loadStored(), []);
   const [params, setParams] = useState<ProfitModelParams>(
-    stored?.params || { ...DEFAULT_PROFIT_PARAMS },
+    sanitizeProfitParams(stored?.params),
   );
   const [rows, setRows] = useState<ProfitSkuInput[]>(
     stored?.rows?.length ? stored.rows : DEMO_ROWS.map((r) => ({ ...r, id: newSkuId() })),
@@ -194,7 +195,7 @@ export default function ProfitCalcTab({
   const setParam = <K extends keyof ProfitModelParams>(key: K, raw: string) => {
     const v = parseFloat(raw);
     if (!Number.isFinite(v)) return;
-    setParams((p) => ({ ...p, [key]: v }));
+    setParams((p) => sanitizeProfitParams({ ...p, [key]: v }));
   };
 
   return (
@@ -311,7 +312,24 @@ export default function ProfitCalcTab({
                       if (isPct) {
                         const v = parseFloat(raw);
                         if (!Number.isFinite(v)) return;
-                        setParams((p) => ({ ...p, [key]: v / 100 }));
+                        setParams((p) => {
+                          const ratio = Math.max(0, Math.min(1, v / 100));
+                          if (key === "preRefundShare") {
+                            return sanitizeProfitParams({
+                              ...p,
+                              preRefundShare: ratio,
+                              postShipShare: 1 - ratio,
+                            });
+                          }
+                          if (key === "postShipShare") {
+                            return sanitizeProfitParams({
+                              ...p,
+                              preRefundShare: 1 - ratio,
+                              postShipShare: ratio,
+                            });
+                          }
+                          return sanitizeProfitParams({ ...p, [key]: ratio });
+                        });
                       } else {
                         setParam(key, raw);
                       }

@@ -1,7 +1,11 @@
 import { FileData } from "../utils/excel";
+import { applySkuMappingRows } from "./skuMapping";
 
 export interface BillRecord {
   fileName: string;
+  /** 原始导入来源名，用于同一来源重导替换 */
+  sourceName?: string;
+  shopName?: string;
   platform: string;
   date: string;
   totalAmount: number;
@@ -9,6 +13,10 @@ export interface BillRecord {
   commission: number;
   techFee: number;
   subsidy: number;
+  refundAmount?: number;
+  otherFee?: number;
+  adExpense?: number;
+  withdraw?: number;
   netAmount: number;
   rawData: any[][];
 }
@@ -119,6 +127,17 @@ export function parseBill(fileData: FileData): BillRecord {
     "返点",
     " rebate",
   ]);
+  const refundCol = findCol(headers, [
+    "退款金额",
+    "实退金额",
+    "refund",
+  ]);
+  const otherFeeCol = findCol(headers, [
+    "其他费用",
+    "罚款",
+    "违约金",
+    "other fee",
+  ]);
   const dateCol = findCol(headers, [
     "日期",
     "账期",
@@ -139,15 +158,24 @@ export function parseBill(fileData: FileData): BillRecord {
       ? rows.reduce((s, r) => s + Math.abs(findAmount([r[commCol]])), 0)
       : 0;
   const techFee =
-    techCol >= 0
+    techCol >= 0 && techCol !== commCol
       ? rows.reduce((s, r) => s + Math.abs(findAmount([r[techCol]])), 0)
       : 0;
   const subsidy =
     subCol >= 0
       ? rows.reduce((s, r) => s + Math.abs(findAmount([r[subCol]])), 0)
       : 0;
+  const refundAmount =
+    refundCol >= 0
+      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[refundCol]])), 0)
+      : 0;
+  const otherFee =
+    otherFeeCol >= 0
+      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[otherFeeCol]])), 0)
+      : 0;
   return {
     fileName: fileData.name,
+    sourceName: fileData.name,
     platform,
     date: dateCol >= 0 ? String(rows[0]?.[dateCol] || "未知账期") : "未知账期",
     totalAmount,
@@ -155,7 +183,10 @@ export function parseBill(fileData: FileData): BillRecord {
     commission,
     techFee,
     subsidy,
-    netAmount: totalAmount - commission - techFee + subsidy,
+    refundAmount,
+    otherFee,
+    netAmount:
+      totalAmount - refundAmount - commission - techFee - otherFee + subsidy,
     rawData: fileData.data,
   };
 }
@@ -274,35 +305,7 @@ export function applySkuMapping(
   currentData: any[][],
   skuMappings: SKUMapping[]
 ): any[][] {
-  if (currentData.length === 0 || skuMappings.length === 0) return currentData;
-  const headers = currentData[0] || [];
-  const dataRows = currentData.slice(1);
-  const internalCodeIdx = headers.findIndex(
-    (h) => String(h ?? "").trim() === "内部编码",
-  );
-
-  const mappedRows = dataRows.map((row) => {
-    const newRow = [...row];
-    let internalCode = internalCodeIdx >= 0
-      ? String(newRow[internalCodeIdx] ?? "").trim()
-      : "";
-    for (let i = 0; i < newRow.length; i++) {
-      const cell = String(newRow[i] || "").trim();
-      const mapping = skuMappings.find((m) => m.platformName === cell);
-      if (mapping) {
-        internalCode = mapping.internalCode;
-        break;
-      }
-    }
-    if (internalCodeIdx >= 0) newRow[internalCodeIdx] = internalCode;
-    else newRow.push(internalCode);
-    return newRow;
-  });
-
-  return [
-    internalCodeIdx >= 0 ? [...headers] : [...headers, "内部编码"],
-    ...mappedRows,
-  ];
+  return applySkuMappingRows(currentData, skuMappings);
 }
 
 export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
@@ -310,10 +313,12 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
   const headers = [
     "平台",
     "账期",
-    "账单金额",
+    "交易收入",
+    "退款",
     "订单笔数",
     "佣金",
     "技术服务费",
+    "其他费用",
     "补贴/返点",
     "净收款",
     "佣金率",
@@ -340,9 +345,11 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
       b.platform,
       b.date,
       b.totalAmount.toFixed(2),
+      (b.refundAmount || 0).toFixed(2),
       b.orderCount,
       b.commission.toFixed(2),
       b.techFee.toFixed(2),
+      (b.otherFee || 0).toFixed(2),
       b.subsidy.toFixed(2),
       b.netAmount.toFixed(2),
       commRate,
@@ -353,8 +360,13 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
 
   const totalAmount = billRecords.reduce((s, b) => s + b.totalAmount, 0);
   const totalCount = billRecords.reduce((s, b) => s + b.orderCount, 0);
+  const totalRefund = billRecords.reduce(
+    (s, b) => s + (b.refundAmount || 0),
+    0,
+  );
   const totalComm = billRecords.reduce((s, b) => s + b.commission, 0);
   const totalTech = billRecords.reduce((s, b) => s + b.techFee, 0);
+  const totalOther = billRecords.reduce((s, b) => s + (b.otherFee || 0), 0);
   const totalSub = billRecords.reduce((s, b) => s + b.subsidy, 0);
   const totalNet = billRecords.reduce((s, b) => s + b.netAmount, 0);
 
@@ -362,9 +374,11 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
     "合计",
     "",
     totalAmount.toFixed(2),
+    totalRefund.toFixed(2),
     totalCount,
     totalComm.toFixed(2),
     totalTech.toFixed(2),
+    totalOther.toFixed(2),
     totalSub.toFixed(2),
     totalNet.toFixed(2),
     "",

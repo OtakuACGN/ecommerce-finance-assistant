@@ -27,7 +27,8 @@ export interface ZtcSkuRow {
   productRoi: number;
   skuAdSpend: number;
   profitAfterAd: number;
-  marginAfterAd: number;
+  /** 扣广告后利润率；确认收入为 0 时不可计算 */
+  marginAfterAd: number | null;
   splitShare: number;
   splitMode: ZtcSplitMode;
   matchBy: "商品ID" | "无广告";
@@ -93,11 +94,11 @@ function skuKey(o: OrderProfitRow): string {
 function weightOf(o: OrderProfitRow, mode: ZtcSplitMode): number {
   if (mode === "qty") return Math.max(0, o.qty || 0);
   if (mode === "gmv") return Math.max(0, o.goodsTotal || 0);
-  return Math.max(0, o.merchantReceived || 0);
+  return Math.max(0, o.revenue || 0);
 }
 
-function pct(n: number): string {
-  if (!isFinite(n)) return "0%";
+function pct(n: number | null): string {
+  if (n == null || !isFinite(n)) return "-";
   return (n * 100).toFixed(2) + "%";
 }
 
@@ -193,7 +194,7 @@ export function buildZtcSkuBreakdown(
         orderCount: 1,
         qty: o.qty || 0,
         goodsTotal: o.goodsTotal || 0,
-        settlement: o.merchantReceived || 0,
+        settlement: o.revenue || 0,
         profitBeforeAd: o.estimatedProfit || 0,
         weight: w,
       });
@@ -201,7 +202,7 @@ export function buildZtcSkuBreakdown(
       prev.orderCount += 1;
       prev.qty += o.qty || 0;
       prev.goodsTotal += o.goodsTotal || 0;
-      prev.settlement += o.merchantReceived || 0;
+      prev.settlement += o.revenue || 0;
       prev.profitBeforeAd += o.estimatedProfit || 0;
       prev.weight += w;
       if (!prev.productName && o.productName) prev.productName = o.productName;
@@ -283,7 +284,7 @@ export function buildZtcSkuBreakdown(
 
       const profitAfter = part.s.profitBeforeAd - skuAd;
       const margin =
-        part.s.settlement > 0 ? profitAfter / part.s.settlement : 0;
+        part.s.settlement > 0 ? profitAfter / part.s.settlement : null;
 
       rows.push({
         productId: part.s.productId || ad?.productId || pid,
@@ -364,7 +365,7 @@ export function buildZtcSkuBreakdown(
   productRows.sort((a, b) => b.productAd - a.productAd || b.profitAfter - a.profitAfter);
 
   const modeLabel =
-    mode === "qty" ? "销量" : mode === "gmv" ? "商品总价" : "结算金额";
+    mode === "qty" ? "销量" : mode === "gmv" ? "商品总价" : "确认收入";
 
   const table: any[][] = [
     [
@@ -376,7 +377,7 @@ export function buildZtcSkuBreakdown(
       "匹配方式",
       "订单数",
       "销量",
-      "结算金额",
+      "确认收入",
       "商品总价",
       "整链广告费",
       "商品ROI",
@@ -417,7 +418,7 @@ export function buildZtcSkuBreakdown(
       "规格数",
       "订单数",
       "销量",
-      "结算金额",
+      "确认收入",
       "整链广告费",
       "商品ROI",
       "毛利(未扣广告)",
@@ -436,7 +437,7 @@ export function buildZtcSkuBreakdown(
       r.productRoi > 0 ? r.productRoi.toFixed(2) : "-",
       r.profitBefore.toFixed(2),
       r.profitAfter.toFixed(2),
-      r.settlement > 0 ? pct(r.profitAfter / r.settlement) : "0%",
+      r.settlement > 0 ? pct(r.profitAfter / r.settlement) : "-",
     ]),
   ];
 

@@ -5,6 +5,7 @@
  * 期望净利 = P − 货值 − 包材 − 运费 − 平台 − 品牌 − 百亿 − 广告 − 运费险 − 售后
  * 建议价：按目标净利率反解 P
  */
+import { calcShippingFeeByRule } from "./pdd/logistics";
 
 export interface ProfitModelParams {
   /** 平台扣点 0.008 = 0.8% */
@@ -102,6 +103,67 @@ export const DEFAULT_PROFIT_PARAMS: ProfitModelParams = {
   targetMargin: 0.15,
 };
 
+function finiteOr(value: unknown, fallback: number): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : parseFloat(String(value ?? "").replace(/[,，%]/g, ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+export function sanitizeProfitParams(
+  input: Partial<ProfitModelParams> | null | undefined,
+): ProfitModelParams {
+  const merged = { ...DEFAULT_PROFIT_PARAMS, ...(input || {}) };
+  let pre = Math.max(
+    0,
+    finiteOr(merged.preRefundShare, DEFAULT_PROFIT_PARAMS.preRefundShare),
+  );
+  let post = Math.max(
+    0,
+    finiteOr(merged.postShipShare, DEFAULT_PROFIT_PARAMS.postShipShare),
+  );
+  const shareTotal = pre + post;
+  if (shareTotal <= 0) {
+    pre = DEFAULT_PROFIT_PARAMS.preRefundShare;
+    post = DEFAULT_PROFIT_PARAMS.postShipShare;
+  } else {
+    pre /= shareTotal;
+    post /= shareTotal;
+  }
+  const positiveOrDefault = (value: unknown, fallback: number) => {
+    const parsed = finiteOr(value, fallback);
+    return parsed > 0 ? parsed : fallback;
+  };
+  return {
+    platformRate: clamp(finiteOr(merged.platformRate, 0), 0, 1),
+    brandRate: clamp(finiteOr(merged.brandRate, 0), 0, 1),
+    bybtRate: clamp(finiteOr(merged.bybtRate, 0), 0, 1),
+    defaultRoi: positiveOrDefault(
+      merged.defaultRoi,
+      DEFAULT_PROFIT_PARAMS.defaultRoi,
+    ),
+    lightRoi: positiveOrDefault(
+      merged.lightRoi,
+      DEFAULT_PROFIT_PARAMS.lightRoi,
+    ),
+    heavyRoi: positiveOrDefault(
+      merged.heavyRoi,
+      DEFAULT_PROFIT_PARAMS.heavyRoi,
+    ),
+    refundRate: clamp(finiteOr(merged.refundRate, 0), 0, 1),
+    preRefundShare: pre,
+    postShipShare: post,
+    insurance: Math.max(0, finiteOr(merged.insurance, 0)),
+    defaultPack: Math.max(0, finiteOr(merged.defaultPack, 0)),
+    targetMargin: clamp(finiteOr(merged.targetMargin, 0), 0, 0.95),
+  };
+}
+
 export function newSkuId(): string {
   return `sku_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -158,23 +220,27 @@ export function calcUnitProfit(
   profit: number;
   margin: number;
 } {
+  params = sanitizeProfitParams(params);
   const P = Math.max(0, input.price);
   const roi = input.roi > 0 ? input.roi : params.defaultRoi;
   const r = Math.max(0, input.refundRate);
   const pre = params.preRefundShare;
   const ret = params.postShipShare;
   const ins = params.insurance;
+  const cost = Math.max(0, input.cost);
+  const pack = Math.max(0, input.pack);
+  const ship = Math.max(0, input.ship);
 
   const ad = roi > 0 ? P / roi : 0;
-  const aftersale = r * pre * ad + r * ret * (ad + ins + input.ship);
+  const aftersale = r * pre * ad + r * ret * (ad + ins + ship);
   const platformFee = P * params.platformRate;
   const brandFee = P * params.brandRate;
   const bybtFee = P * params.bybtRate * (input.bybt ? 1 : 0);
   const profit =
     P -
-    input.cost -
-    input.pack -
-    input.ship -
+    cost -
+    pack -
+    ship -
     platformFee -
     brandFee -
     bybtFee -
@@ -198,12 +264,16 @@ export function suggestPrice(
   params: ProfitModelParams,
   targetMargin = params.targetMargin,
 ): number | null {
+  params = sanitizeProfitParams(params);
   const roi = input.roi > 0 ? input.roi : params.defaultRoi;
   if (roi <= 0) return null;
   const r = Math.max(0, input.refundRate);
   const a = r * params.preRefundShare;
   const b = r * params.postShipShare;
   const F = input.bybt ? 1 : 0;
+  const cost = Math.max(0, input.cost);
+  const pack = Math.max(0, input.pack);
+  const ship = Math.max(0, input.ship);
   const coef =
     1 -
     params.platformRate -
@@ -211,11 +281,11 @@ export function suggestPrice(
     params.bybtRate * F -
     (1 + a + b) / roi;
   const fixed =
-    input.cost +
-    input.pack +
-    input.ship +
+    cost +
+    pack +
+    ship +
     params.insurance +
-    b * (params.insurance + input.ship);
+    b * (params.insurance + ship);
   const den = coef - targetMargin;
   if (den <= 1e-9) return null;
   const p = fixed / den;
@@ -226,6 +296,7 @@ export function resolveEffective(
   row: ProfitSkuInput,
   params: ProfitModelParams,
 ): { roi: number; refundRate: number; pack: number } {
+  params = sanitizeProfitParams(params);
   const roi =
     row.rowRoi != null && row.rowRoi > 0 ? n(row.rowRoi) : params.defaultRoi;
   const refundRate =
@@ -241,11 +312,12 @@ export function calcSku(
   row: ProfitSkuInput,
   params: ProfitModelParams,
 ): ProfitSkuResult {
+  params = sanitizeProfitParams(params);
   const { roi, refundRate, pack } = resolveEffective(row, params);
   const base = {
-    cost: n(row.cost),
+    cost: Math.max(0, n(row.cost)),
     pack,
-    ship: n(row.ship),
+    ship: Math.max(0, n(row.ship)),
     bybt: row.bybt ? (1 as const) : (0 as const),
     roi,
     refundRate,
@@ -305,6 +377,7 @@ export function calcAll(
   rows: ProfitSkuInput[],
   params: ProfitModelParams,
 ): { results: ProfitSkuResult[]; summary: ProfitSummary } {
+  params = sanitizeProfitParams(params);
   const results = rows.map((r) => calcSku(r, params));
   const priced = results.filter((r) => r.price > 0);
   const totalPrice = priced.reduce((s, r) => s + r.price, 0);
@@ -337,6 +410,7 @@ export function buildProfitExportSheets(
   rows: ProfitSkuInput[],
   params: ProfitModelParams,
 ): Array<{ name: string; data: any[][] }> {
+  params = sanitizeProfitParams(params);
   const { results, summary } = calcAll(rows, params);
 
   const previewHeader = [
@@ -531,7 +605,16 @@ export function skusFromProductMaster(
       sku: p.skuCode || p.specName || "",
       cost: n(p.costPrice),
       pack: p.packCost != null ? n(p.packCost) : null,
-      ship: 3,
+      ship: calcShippingFeeByRule(
+        n(p.weightKg),
+        {
+          firstWeightKg: 1,
+          firstWeightFee: 3,
+          additionalWeightKg: 1,
+          additionalWeightFee: 1,
+        },
+        1,
+      ),
       price: n(p.salePrice),
       currentPrice: n(p.salePrice) || null,
     }),

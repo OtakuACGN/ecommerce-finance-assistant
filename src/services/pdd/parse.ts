@@ -396,16 +396,28 @@ export function billRecordFromPdd(fileData: FileData, lines: PddBillLine[]): Bil
     o.net.toFixed(2),
     o.lines,
   ]);
+  const shopNames = Array.from(
+    new Set(lines.map((line) => String(line.shopName || "").trim()).filter(Boolean)),
+  );
+  const orderCount = Array.from(byOrder.keys()).filter(
+    (orderId) => orderId !== "(无订单号)",
+  ).length;
 
   return {
     fileName: fileData.name,
+    sourceName: fileData.name,
+    shopName: shopNames.length === 1 ? shopNames[0] : "",
     platform: "拼多多",
     date: period,
     totalAmount: totals.income,
-    orderCount: byOrder.size,
+    orderCount,
     commission: 0,
     techFee: totals.techFee,
     subsidy: totals.subsidy,
+    refundAmount: totals.refund,
+    otherFee: totals.otherFee,
+    adExpense: totals.adExpense,
+    withdraw: totals.withdraw,
     netAmount: totals.net,
     rawData: [wideHeader, ...wideRows],
   };
@@ -472,6 +484,7 @@ export function ordersToTable(orders: PddOrder[]): any[][] {
       "商品总价",
       "数量",
       "订单状态",
+      "成交时间",
       "店铺",
     ],
     ...orders.map((o) => [
@@ -483,6 +496,7 @@ export function ordersToTable(orders: PddOrder[]): any[][] {
       Number(o.goodsTotal || 0),
       Number(o.qty || 0),
       o.status || "",
+      o.dealTime || "",
       o.shopName || "",
     ]),
   ];
@@ -510,6 +524,7 @@ export function reconcileOrderPayments(
   const orderAmtIdx = findIdx(orderHeaders, amountColHint);
   const orderIdIdx = findIdx(orderHeaders, ["订单号", "商户订单号", "主订单号", "order id", "orderid"]);
   const nameIdx = findIdx(orderHeaders, ["商品名称", "商品", "品名"]);
+  const orderShopIdx = findIdx(orderHeaders, ["店铺名称", "店铺", "商家名称", "商家"]);
   const orderDateIdx = findIdx(orderHeaders, ["成交时间", "确认时间", "发货时间", "日期", "时间"]);
 
   const payAmtIdx = findIdx(payHeaders, amountColHint);
@@ -533,6 +548,7 @@ export function reconcileOrderPayments(
     "memo",
   ]);
   const payDateIdx = findIdx(payHeaders, ["发生时间", "交易时间", "入账时间", "日期", "时间", "记账时间"]);
+  const payShopIdx = findIdx(payHeaders, ["店铺名称", "店铺", "商家名称", "商家"]);
 
   const parseAmount = (v: unknown): number => {
     const n = parseFloat(String(v ?? "").replace(/[¥$,，￥\s]/g, ""));
@@ -556,6 +572,8 @@ export function reconcileOrderPayments(
       .trim()
       .replace(/[\s\-—_]/g, "")
       .toUpperCase();
+  const normalizeShop = (s: unknown) =>
+    String(s ?? "").trim().replace(/\s+/g, "").toLowerCase();
 
   const extractIdsFromText = (text: string): string[] => {
     const s = String(text || "");
@@ -588,6 +606,7 @@ export function reconcileOrderPayments(
     amount: number;
     orderId: string;
     remark: string;
+    shop: string;
     dateMs: number | null;
     used: boolean;
   };
@@ -605,6 +624,7 @@ export function reconcileOrderPayments(
       amount: rowAmount(row, payAmtIdx),
       orderId: normalizeOrderId(orderIdRaw),
       remark,
+      shop: payShopIdx >= 0 ? normalizeShop(row[payShopIdx]) : "",
       dateMs: payDateIdx >= 0 ? parseLooseDate(row[payDateIdx]) : null,
       used: false,
     };
@@ -642,6 +662,7 @@ export function reconcileOrderPayments(
     const oidRaw = orderIdIdx >= 0 ? String(order[orderIdIdx] ?? "").trim() : "";
     const oidNorm = normalizeOrderId(oidRaw);
     const name = nameIdx >= 0 ? String(order[nameIdx] ?? "") : "";
+    const orderShop = orderShopIdx >= 0 ? normalizeShop(order[orderShopIdx]) : "";
     const orderAmount = rowAmount(order, orderAmtIdx);
     if (!oidNorm && orderAmount === 0) continue;
     const orderDateMs =
@@ -653,13 +674,17 @@ export function reconcileOrderPayments(
 
     // 1) 订单号列精确匹配
     if (oidNorm && byOrderId.has(oidNorm)) {
-      const cands = (byOrderId.get(oidNorm) || []).filter((i) => !payments[i].used);
+      const cands = (byOrderId.get(oidNorm) || []).filter((i) =>
+        !payments[i].used
+        && !(orderShop && payments[i].shop && payments[i].shop !== orderShop),
+      );
       if (cands.length) {
-        // 多条时优先金额接近
+        // 多店铺存在相同订单号时先按店铺隔离，再按金额接近。
         cands.sort(
           (a, b) =>
-            Math.abs(payments[a].amount - orderAmount) -
-            Math.abs(payments[b].amount - orderAmount),
+            Number(payments[b].shop === orderShop) - Number(payments[a].shop === orderShop)
+            || Math.abs(payments[a].amount - orderAmount)
+              - Math.abs(payments[b].amount - orderAmount),
         );
         hitIdx = cands[0];
         method = "订单号";
@@ -671,6 +696,7 @@ export function reconcileOrderPayments(
     if (hitIdx < 0 && oidNorm) {
       for (let i = 0; i < payments.length; i++) {
         if (payments[i].used) continue;
+        if (orderShop && payments[i].shop && payments[i].shop !== orderShop) continue;
         const textIds = extractIdsFromText(payments[i].remark);
         if (
           payments[i].remark.includes(oidRaw) ||
@@ -691,6 +717,7 @@ export function reconcileOrderPayments(
       let bestScore = Number.POSITIVE_INFINITY;
       for (let i = 0; i < payments.length; i++) {
         if (payments[i].used) continue;
+        if (orderShop && payments[i].shop && payments[i].shop !== orderShop) continue;
         if (Math.abs(payments[i].amount - orderAmount) >= 0.01) continue;
         let score = 0;
         if (orderDateMs != null && payments[i].dateMs != null) {

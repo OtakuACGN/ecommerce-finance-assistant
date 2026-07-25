@@ -1,5 +1,5 @@
 /**
- * DianCaiTong 1.2.4 smoke suite
+ * DianCaiTong 1.2.9 smoke suite
  */
 import * as path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -47,18 +47,79 @@ async function main() {
   ok("express.exportFace", table[0].includes("预付面单"));
   ok("express.exportActual", table[0].includes("实际费用"));
   ok("express.exportDiff", table[0].some((h: string) => String(h).includes("预付差额")));
+  const duplicateBillRows = express.parseCourierBill([
+    ["运单号", "计费重量", "运费", "加收费用"],
+    ["YT-DUP", 1, 2, 0],
+    ["YT-DUP", 1, 0, 0.5],
+  ]);
+  ok(
+    "express.duplicate_fee_rows_do_not_duplicate_weight",
+    duplicateBillRows.length === 1
+      && duplicateBillRows[0].weight === 1
+      && Math.abs(duplicateBillRows[0].totalFee - 2.5) < 0.01,
+    JSON.stringify(duplicateBillRows),
+  );
 
   const after = await load("src/services/afterSaleAnalysis.ts");
   const afterData = [
     ["售后单号","售后状态","平台售后状态","订单状态","售后类型","退款类型","发货状态","快递公司","快递单号","平台订单号","售后原因","售后描述","商品名称","商品规格","商品ID","申请退款金额","订单金额","退款数量","商品数量"],
     ["SH1","已确认","退款成功","已发货","退款","","买家已签收","圆通","YT1","ORD1","其他原因","","垫","标准款","P1",15,39,1,1],
     ["SH2","已确认","退款成功","已发货","退款","","买家已签收","圆通","YT2","ORD2","质量问题","质量问题、做工太差","垫","标准款","P1",39,39,1,1],
+    ["SH3","","平台处理中","已发货","退款","","买家已签收","圆通","YT3","ORD3","其他原因","","垫","标准款","P1",10,39,1,1],
   ];
   const ar = after.parseAndAnalyzeAfterSales(fd("after.xlsx", afterData));
   ok("after.success", ar.summary.success === 2, String(ar.summary.success));
   ok("after.partial", ar.summary.partialRefund >= 1, String(ar.summary.partialRefund));
+  ok("after.platform_processing", ar.summary.processing === 1, String(ar.summary.processing));
   const emptyN = ar.rows.filter((r: any) => r.descClusterKey === "empty" || r.descClusterLabel === "无有效描述").length;
   ok("after.emptyDesc", emptyN >= 1, String(emptyN));
+  const multiSkuOrders = after.parseOrderBaseFile([
+    ["订单号", "商品ID", "商品名称", "商品规格", "规格编码", "商品总价", "商家实收", "商品数量"],
+    ["ORD-MULTI", "P1", "商品一", "红色", "SKU-RED", 10, 9, 1],
+    ["ORD-MULTI", "P2", "商品二", "蓝色", "SKU-BLUE", 20, 18, 1],
+  ]);
+  const multiSkuAfterRow = {
+    ...ar.rows[0],
+    orderId: "ORD-MULTI",
+    productId: "P2",
+    productName: "商品二",
+    specName: "蓝色",
+    skuInfo: "蓝色",
+    merchantSku: "SKU-BLUE",
+    refundAmount: 20,
+    tradeAmount: 20,
+  };
+  const multiSkuResult = after.analyzeAfterSales([multiSkuAfterRow], { orders: multiSkuOrders });
+  const blueSku = multiSkuResult.skuRank.find((x: any) => x.productId === "P2");
+  ok(
+    "after.multi_sku_order_keeps_sku_denominator",
+    multiSkuOrders.length === 2
+      && multiSkuResult.summary.orderBaseCount === 1
+      && multiSkuResult.summary.orderBaseGmv === 30
+      && blueSku?.orderCount === 1
+      && blueSku?.orderGmv === 20,
+    JSON.stringify({ orders: multiSkuOrders, summary: multiSkuResult.summary, blueSku }),
+  );
+  const multiSkuFileResult = after.parseAndAnalyzeAfterSales(
+    fd("after-multi.xlsx", [
+      afterData[0],
+      ["SH-MULTI","已确认","退款成功","已发货","退款","","买家已签收","圆通","YT-M","ORD-MULTI","其他原因","","商品二","蓝色","P2",20,20,1,1],
+    ]),
+    {
+      orderFile: fd("orders-multi.xlsx", [
+        ["订单号", "商品ID", "商品名称", "商品规格", "规格编码", "商品总价", "商家实收", "商品数量"],
+        ["ORD-MULTI", "P1", "商品一", "红色", "SKU-RED", 10, 9, 1],
+        ["ORD-MULTI", "P2", "商品二", "蓝色", "SKU-BLUE", 20, 18, 1],
+      ]),
+    },
+  );
+  ok(
+    "after.file_pipeline_preserves_multi_sku",
+    multiSkuFileResult.summary.orderBaseCount === 1
+      && multiSkuFileResult.summary.orderBaseGmv === 30
+      && multiSkuFileResult.skuRank.find((x: any) => x.productId === "P2")?.orderGmv === 20,
+    JSON.stringify(multiSkuFileResult.summary),
+  );
 
   
   // refund classification: full vs partial
@@ -277,6 +338,180 @@ const pdd = await load("src/services/pddBusiness.ts");
       JSON.stringify(mappedTwice),
     );
 
+    const productMappings = pdd.productsToSkuMappings([
+      {
+        productCode: "P1", productName: "同一商品", skuCode: "S-RED", specName: "红色",
+        salePrice: 20, costPrice: 10, packCost: 0, weightKg: 0.5, stock: 0,
+      },
+      {
+        productCode: "P1", productName: "同一商品", skuCode: "S-BLUE", specName: "蓝色",
+        salePrice: 20, costPrice: 11, packCost: 0, weightKg: 0.5, stock: 0,
+      },
+    ]);
+    const mappedSpecificSku = logic.applySkuMapping(
+      [["订单号", "商品名称", "商品规格", "商家编码-规格"], ["O1", "同一商品", "蓝色", "S-BLUE"]],
+      productMappings,
+    );
+    ok(
+      "mapping.specific_sku_beats_generic_product_name",
+      mappedSpecificSku[1][4] === "S-BLUE",
+      JSON.stringify(mappedSpecificSku[1]),
+    );
+
+    const sameAmountOrders = pdd.ordersToTable([
+      { ...orders[0], orderId: "PAY-1", dealTime: "2026-06-01", merchantReceived: 100 },
+      { ...orders[0], orderId: "PAY-2", dealTime: "2026-06-20", merchantReceived: 100 },
+    ]);
+    const paymentResult = pdd.reconcileOrderPayments(sameAmountOrders, [
+      ["收款金额", "交易时间", "备注"],
+      [100, "2026-06-20", "第二笔"],
+      [100, "2026-06-01", "第一笔"],
+    ]);
+    ok(
+      "reconcile.same_amount_uses_order_date",
+      paymentResult[1][6] === "金额+日期" &&
+        String(paymentResult[1][8]).includes("第一笔") &&
+        String(paymentResult[2][8]).includes("第二笔"),
+      JSON.stringify(paymentResult.slice(1)),
+    );
+    const sameOrderAcrossShops = pdd.reconcileOrderPayments(
+      [
+        ["成交时间", "店铺", "订单号", "商品名称", "商家实收"],
+        ["2026-06-01", "店铺A", "SHARED-ORDER-001", "商品", 100],
+        ["2026-06-01", "店铺B", "SHARED-ORDER-001", "商品", 100],
+      ],
+      [
+        ["订单号", "收款金额", "店铺", "备注"],
+        ["SHARED-ORDER-001", 100, "店铺B", "B店收款"],
+        ["SHARED-ORDER-001", 100, "店铺A", "A店收款"],
+      ],
+    );
+    ok(
+      "reconcile.duplicate_order_id_respects_shop",
+      String(sameOrderAcrossShops[1][8]).includes("A店收款")
+        && String(sameOrderAcrossShops[2][8]).includes("B店收款"),
+      JSON.stringify(sameOrderAcrossShops.slice(1)),
+    );
+
+    const profitCalc = await load("src/services/profitCalc.ts");
+    const weightedProfitRows = profitCalc.skusFromProductMaster([
+      {
+        productName: "重货", skuCode: "HEAVY", costPrice: 10, packCost: 0,
+        weightKg: 2.2, salePrice: 30,
+      },
+    ]);
+    ok(
+      "profitCalc.product_weight_drives_shipping",
+      weightedProfitRows.length === 1 && weightedProfitRows[0].ship === 5,
+      JSON.stringify(weightedProfitRows[0]),
+    );
+    const safeProfitParams = profitCalc.sanitizeProfitParams({
+      ...profitCalc.DEFAULT_PROFIT_PARAMS,
+      platformRate: -0.2,
+      refundRate: 2,
+      preRefundShare: -1,
+      postShipShare: 3,
+      insurance: -5,
+    });
+    ok(
+      "profitCalc.invalid_params_are_sanitized",
+      safeProfitParams.platformRate === 0 &&
+        safeProfitParams.refundRate === 1 &&
+        safeProfitParams.preRefundShare === 0 &&
+        safeProfitParams.postShipShare === 1 &&
+        safeProfitParams.insurance === 0,
+      JSON.stringify(safeProfitParams),
+    );
+    const ztc = await load("src/services/ztcSkuSplit.ts");
+    const refundedZtc = ztc.buildZtcSkuBreakdown(
+      [{
+        productId: "P1", productName: "商品", merchantSpu: "SP1", merchantSku: "SKU1",
+        specName: "标准", qty: 1, goodsTotal: 100, merchantReceived: 100,
+        revenue: 0, estimatedProfit: -3,
+      }],
+      [{
+        productId: "P1", productName: "商品", spend: 0, dealSpend: 0, gmv: 0,
+        netGmv: 0, settledGmv: 0, orders: 0, roi: 0, netRoi: 0, settledRoi: 0,
+      }],
+      "settlement",
+    );
+    ok(
+      "ztc.margin_uses_confirmed_revenue",
+      refundedZtc.rows[0].settlement === 0 &&
+        refundedZtc.rows[0].marginAfterAd === null &&
+        refundedZtc.table[0].includes("确认收入"),
+      JSON.stringify(refundedZtc.rows[0]),
+    );
+    const salesRankReport = pdd.buildOperatingReport(
+      [
+        { ...orders[0], orderId: "SALE-1", status: "已收货", qty: 1, goodsTotal: 10, merchantReceived: 10 },
+        { ...orders[0], orderId: "CANCEL-1", status: "已取消", qty: 100, goodsTotal: 1000, merchantReceived: 1000 },
+      ],
+      [],
+      [{
+        productCode: "SPU1", productName: "item", skuCode: "RED", specName: "RED",
+        salePrice: 10, costPrice: 0, packCost: 0, weightKg: 0, stock: 0,
+      }],
+      [],
+      {
+        ...pdd.DEFAULT_COST_SETTINGS,
+        adAllocateMode: "none",
+        defaultPackCost: 0,
+        firstWeightFee: 0,
+        additionalWeightFee: 0,
+        expressRules: [],
+      },
+      [],
+    );
+    const salesHeaders = salesRankReport.salesRankSkuTable[0];
+    const salesRow = salesRankReport.salesRankSkuTable[1];
+    ok(
+      "salesRank.excludes_cancelled_and_uses_confirmed_revenue",
+      salesRow[salesHeaders.indexOf("销量")] === 1 &&
+        Number(salesRow[salesHeaders.indexOf("确认收入")]) === 10 &&
+        salesHeaders.includes("确认收入"),
+      JSON.stringify(salesRankReport.salesRankSkuTable),
+    );
+    const explicitBillRecord = pdd.billRecordFromPdd(
+      { name: "六月账务.csv", path: "", headers: [], data: [] },
+      [
+        { orderId: "BILL-1", time: "2026-06-01", income: 100, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+        { orderId: "BILL-1", time: "2026-06-02", income: 0, expense: 20, billType: "退款", remark: "", bizDesc: "" },
+        { orderId: "BILL-1", time: "2026-06-02", income: 0, expense: 5, billType: "罚款", remark: "", bizDesc: "" },
+        { orderId: "", time: "2026-06-03", income: 0, expense: 50, billType: "提现", remark: "", bizDesc: "" },
+      ],
+    );
+    ok(
+      "bill.record_exposes_refund_other_and_real_order_count",
+      explicitBillRecord.orderCount === 1 &&
+        explicitBillRecord.refundAmount === 20 &&
+        explicitBillRecord.otherFee === 5 &&
+        explicitBillRecord.withdraw === 50 &&
+        explicitBillRecord.netAmount === 75,
+      JSON.stringify(explicitBillRecord),
+    );
+    const billRecordsService = await load("src/services/billRecords.ts");
+    const replacedBillRecords = billRecordsService.replaceBillRecordSource(
+      [{
+        ...explicitBillRecord,
+        sourceName: "六月账务.csv",
+        shopName: "店A",
+        totalAmount: 90,
+      }],
+      {
+        ...explicitBillRecord,
+        sourceName: "六月账务.csv",
+        shopName: "店A",
+        totalAmount: 100,
+      },
+    );
+    ok(
+      "bill.same_source_reimport_replaces_record",
+      replacedBillRecords.length === 1 &&
+        replacedBillRecords[0].totalAmount === 100,
+      JSON.stringify(replacedBillRecords),
+    );
+
     const now = new Date();
     const previousYearSameMonth =
       `${now.getFullYear() - 1}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -294,8 +529,8 @@ const pdd = await load("src/services/pddBusiness.ts");
     }]);
     ok(
       "accrual.same_month_previous_year_is_cross_period",
-      accrual[1][10] === "⚠️跨期",
-      String(accrual[1][10]),
+      accrual[1][accrual[0].indexOf("是否跨期")] === "⚠️跨期",
+      JSON.stringify(accrual[1]),
     );
   }
 

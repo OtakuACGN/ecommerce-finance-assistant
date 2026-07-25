@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { exportToExcel } from "../utils/excel";
 import { saveDataFile } from "../utils/desktop";
+import type { BillRecord } from "../services/businessLogic";
 
 interface PlatformSummary {
   platform: string;
@@ -8,8 +9,10 @@ interface PlatformSummary {
   orderCount: number;
   commission: number;
   techFee: number;
+  otherFee: number;
   subsidy: number;
   refundAmount: number;
+  refundDetailAmount: number;
   refundCount: number;
   refundLoss: number;
   netAmount: number;
@@ -23,16 +26,7 @@ interface RefundOrder {
 }
 
 interface Props {
-  billRecords: {
-    platform: string;
-    date: string;
-    totalAmount: number;
-    orderCount: number;
-    commission: number;
-    techFee: number;
-    subsidy: number;
-    netAmount: number;
-  }[];
+  billRecords: BillRecord[];
   refundRecords: RefundOrder[];
   onImportBill: () => void;
   desktopReady: boolean;
@@ -50,12 +44,6 @@ export default function MonthlySummary({
     year: number;
     month: number;
   } | null>(null);
-
-  const years = useMemo(() => {
-    const y = [];
-    for (let i = new Date().getFullYear(); i >= 2023; i--) y.push(i);
-    return y;
-  }, []);
 
   const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -75,6 +63,30 @@ export default function MonthlySummary({
     if (isNaN(parsed.getTime())) return "";
     return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
   }, []);
+  const years = useMemo(() => {
+    const importedYears = billRecords
+      .map((record) => Number(getMonthKey(record.date).slice(0, 4)))
+      .filter((year) => Number.isInteger(year) && year >= 2000 && year <= 2100);
+    const current = new Date().getFullYear();
+    const min = Math.min(current, 2023, ...importedYears);
+    const max = Math.max(current, ...importedYears);
+    const values: number[] = [];
+    for (let year = max; year >= min; year--) values.push(year);
+    return values;
+  }, [billRecords, getMonthKey]);
+  const comparisonOptions = useMemo(
+    () =>
+      years.flatMap((year) =>
+        [...months]
+          .reverse()
+          .map((month) => ({
+            year,
+            month,
+            value: `${year}-${String(month).padStart(2, "0")}`,
+          })),
+      ),
+    [years],
+  );
   const autoSelectedRef = useRef(false);
 
   useEffect(() => {
@@ -112,8 +124,10 @@ export default function MonthlySummary({
             orderCount: 0,
             commission: 0,
             techFee: 0,
+            otherFee: 0,
             subsidy: 0,
             refundAmount: 0,
+            refundDetailAmount: 0,
             refundCount: 0,
             refundLoss: 0,
             netAmount: 0,
@@ -122,7 +136,9 @@ export default function MonthlySummary({
         map[p].orderCount += b.orderCount;
         map[p].commission += b.commission;
         map[p].techFee += b.techFee;
+        map[p].otherFee += b.otherFee || 0;
         map[p].subsidy += b.subsidy;
+        map[p].refundAmount += b.refundAmount || 0;
         map[p].netAmount += b.netAmount;
       });
       refundRecords.forEach((r) => {
@@ -136,17 +152,27 @@ export default function MonthlySummary({
             orderCount: 0,
             commission: 0,
             techFee: 0,
+            otherFee: 0,
             subsidy: 0,
             refundAmount: 0,
+            refundDetailAmount: 0,
             refundCount: 0,
             refundLoss: 0,
             netAmount: 0,
           };
-        map[p].refundAmount += r.refundAmount;
+        map[p].refundDetailAmount += r.refundAmount;
         map[p].refundCount += 1;
         map[p].refundLoss += r.commissionLost;
       });
-      return Object.values(map).sort((a, b) => b.gmv - a.gmv);
+      return Object.values(map)
+        .map((summary) => ({
+          ...summary,
+          refundAmount:
+            summary.refundAmount > 0
+              ? summary.refundAmount
+              : summary.refundDetailAmount,
+        }))
+        .sort((a, b) => b.gmv - a.gmv);
     },
     [billRecords, refundRecords, getMonthKey],
   );
@@ -161,6 +187,7 @@ export default function MonthlySummary({
       orderCount: currentSummary.reduce((s, p) => s + p.orderCount, 0),
       commission: currentSummary.reduce((s, p) => s + p.commission, 0),
       techFee: currentSummary.reduce((s, p) => s + p.techFee, 0),
+      otherFee: currentSummary.reduce((s, p) => s + p.otherFee, 0),
       subsidy: currentSummary.reduce((s, p) => s + p.subsidy, 0),
       refundAmount: currentSummary.reduce((s, p) => s + p.refundAmount, 0),
       refundLoss: currentSummary.reduce((s, p) => s + p.refundLoss, 0),
@@ -194,39 +221,42 @@ export default function MonthlySummary({
     if (currentSummary.length === 0) return;
     const headers = [
       "平台",
-      "GMV",
+      "交易收入",
       "订单数",
+      "退款",
       "佣金",
       "技术服务费",
+      "其他费用",
       "补贴/返点",
       "净收款",
-      "退款金额",
       "佣金损失",
       "净收入",
     ];
     const rows = currentSummary.map((p) => [
       p.platform,
-      fmt(p.gmv),
+      p.gmv,
       p.orderCount,
-      fmt(p.commission),
-      fmt(p.techFee),
-      fmt(p.subsidy),
-      fmt(p.netAmount),
-      fmt(p.refundAmount),
-      fmt(p.refundLoss),
-      fmt(p.netAmount - p.refundLoss),
+      p.refundAmount,
+      p.commission,
+      p.techFee,
+      p.otherFee,
+      p.subsidy,
+      p.netAmount,
+      p.refundLoss,
+      p.netAmount - p.refundLoss,
     ]);
     rows.push([
       "合计",
-      fmt(currentTotal.gmv),
+      currentTotal.gmv,
       currentTotal.orderCount,
-      fmt(currentTotal.commission),
-      fmt(currentTotal.techFee),
-      fmt(currentTotal.subsidy),
-      fmt(currentTotal.netAmount),
-      fmt(currentTotal.refundAmount),
-      fmt(currentTotal.refundLoss),
-      fmt(currentTotal.netAmount - currentTotal.refundLoss),
+      currentTotal.refundAmount,
+      currentTotal.commission,
+      currentTotal.techFee,
+      currentTotal.otherFee,
+      currentTotal.subsidy,
+      currentTotal.netAmount,
+      currentTotal.refundLoss,
+      currentTotal.netAmount - currentTotal.refundLoss,
     ]);
     try {
       const result = await saveDataFile(`月度汇总_${currentMonthStr}.xlsx`);
@@ -300,7 +330,7 @@ export default function MonthlySummary({
               <select
                 value={
                   comparisonMonth
-                    ? `${comparisonMonth.year}-${comparisonMonth.month}`
+                    ? `${comparisonMonth.year}-${String(comparisonMonth.month).padStart(2, "0")}`
                     : ""
                 }
                 onChange={(e) => {
@@ -314,11 +344,11 @@ export default function MonthlySummary({
                 className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500"
               >
                 <option value="">不对比</option>
-                {months.map((m) => {
-                  const val = `${selectedYear}-${String(m).padStart(2, "0")}`;
+                {comparisonOptions.map((option) => {
+                  if (option.value === currentMonthStr) return null;
                   return (
-                    <option key={m} value={val}>
-                      {selectedYear}年{m}月
+                    <option key={option.value} value={option.value}>
+                      {option.year}年{option.month}月
                     </option>
                   );
                 })}
@@ -352,7 +382,7 @@ export default function MonthlySummary({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               {
-                label: "总GMV",
+                label: "账务交易收入",
                 value: currentTotal.gmv,
                 unit: "¥",
                 icon: "💰",
@@ -366,8 +396,12 @@ export default function MonthlySummary({
                 colorClass: "text-emerald-700",
               },
               {
-                label: "佣金+扣点",
-                value: currentTotal.commission + currentTotal.techFee,
+                label: "退款+平台费用",
+                value:
+                  currentTotal.refundAmount +
+                  currentTotal.commission +
+                  currentTotal.techFee +
+                  currentTotal.otherFee,
                 unit: "¥",
                 icon: "💸",
                 colorClass: "text-rose-700",
@@ -391,10 +425,16 @@ export default function MonthlySummary({
                 {comparisonSummary.length > 0 &&
                   (() => {
                     const comp = comparisonSummary.reduce((s, p) => {
-                      if (card.label.includes("GMV")) return s + p.gmv;
+                      if (card.label.includes("交易收入")) return s + p.gmv;
                       if (card.label.includes("净收款")) return s + p.netAmount;
-                      if (card.label.includes("佣金"))
-                        return s + p.commission + p.techFee;
+                      if (card.label.includes("退款"))
+                        return (
+                          s +
+                          p.refundAmount +
+                          p.commission +
+                          p.techFee +
+                          p.otherFee
+                        );
                       if (card.label.includes("补贴")) return s + p.subsidy;
                       return 0;
                     }, 0);
@@ -438,26 +478,32 @@ export default function MonthlySummary({
                       平台
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
-                      GMV (¥)
+                      交易收入 (¥)
                     </th>
                     {comparisonSummary.length > 0 && (
                       <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
-                        上月GMV
+                        对比月收入
                       </th>
                     )}
                     {comparisonSummary.length > 0 && (
                       <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
-                        GMV变化
+                        收入变化
                       </th>
                     )}
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
                       订单数
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
+                      退款 (¥)
+                    </th>
+                    <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
                       佣金 (¥)
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
                       技术服务费 (¥)
+                    </th>
+                    <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
+                      其他费用 (¥)
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
                       补贴/返点 (¥)
@@ -518,11 +564,17 @@ export default function MonthlySummary({
                         <td className="px-4 py-2.5 text-right text-gray-600">
                           {p.orderCount.toLocaleString()}
                         </td>
+                        <td className="px-4 py-2.5 text-right text-rose-600">
+                          {fmt(p.refundAmount)}
+                        </td>
                         <td className="px-4 py-2.5 text-right text-red-600">
                           {fmt(p.commission)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-orange-600">
                           {fmt(p.techFee)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-amber-700">
+                          {fmt(p.otherFee)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-green-600">
                           {fmt(p.subsidy)}
@@ -574,11 +626,17 @@ export default function MonthlySummary({
                     <td className="px-4 py-2.5 text-right text-gray-800">
                       {currentTotal.orderCount.toLocaleString()}
                     </td>
+                    <td className="px-4 py-2.5 text-right text-rose-600">
+                      {fmt(currentTotal.refundAmount)}
+                    </td>
                     <td className="px-4 py-2.5 text-right text-red-600">
                       {fmt(currentTotal.commission)}
                     </td>
                     <td className="px-4 py-2.5 text-right text-orange-600">
                       {fmt(currentTotal.techFee)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-amber-700">
+                      {fmt(currentTotal.otherFee)}
                     </td>
                     <td className="px-4 py-2.5 text-right text-green-600">
                       {fmt(currentTotal.subsidy)}
@@ -623,12 +681,12 @@ export default function MonthlySummary({
                 平均佣金率）
               </li>
               <li>
-                • <strong>佣金</strong> =
-                各平台账单中的佣金扣点（按订单额比例计算）
+                • <strong>交易收入</strong>、退款、技术服务费和其他费用均来自账务明细；
+                净收款已经扣除退款及费用
               </li>
               <li>
                 • <strong>对比月份</strong>
-                显示与上月的GMV环比变化，↑表示增长，↓表示下降
+                可跨年份选择月份，显示账务交易收入变化，↑表示增长，↓表示下降
               </li>
               <li>
                 •

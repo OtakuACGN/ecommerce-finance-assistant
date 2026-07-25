@@ -15,8 +15,8 @@ import {
   findAmount,
   detectPlatform,
 } from "../services/businessLogic";
-import type { PddBillLine } from "../services/pddBusiness";
-import { ingestForOperating } from "../services/pddBusiness";
+import { guessShopNameFromFile, ingestForOperating } from "../services/pddBusiness";
+import { replaceBillRecordSource } from "../services/billRecords";
 import {
   buildAccrualTable,
   buildRefundLossTable,
@@ -29,7 +29,6 @@ type ShowToast = (message: string, type?: ToastMessage["type"]) => void;
 export interface BillRefundHandlerDeps {
   billRecords: BillRecord[];
   setBillRecords: Dispatch<SetStateAction<BillRecord[]>>;
-  setOpBillLines: Dispatch<SetStateAction<PddBillLine[]>>;
   commissionDetails: CommissionDetail[];
   setCommissionDetails: Dispatch<SetStateAction<CommissionDetail[]>>;
   refundRecords: RefundOrder[];
@@ -49,7 +48,6 @@ export function useBillRefundHandlers(deps: BillRefundHandlerDeps) {
   const {
     billRecords,
     setBillRecords,
-    setOpBillLines,
     commissionDetails,
     setCommissionDetails,
     refundRecords,
@@ -74,22 +72,31 @@ export function useBillRefundHandlers(deps: BillRefundHandlerDeps) {
           if (!fileData) continue;
           const ingested = ingestForOperating(fileData);
           if (ingested.kind === "pdd_bill" && ingested.billRecord) {
-            setBillRecords((prev) => [...prev, ingested.billRecord!]);
-            setOpBillLines((prev) => [...prev, ...ingested.billLines]);
+            const record = {
+              ...ingested.billRecord,
+              sourceName: fileData.name,
+              shopName: guessShopNameFromFile(fileData.name),
+            };
+            setBillRecords((prev) => replaceBillRecordSource(prev, record));
             showToast(
               `已识别拼多多账务明细：${ingested.billLines.length} 行流水`,
               "success",
             );
           } else {
-            const record = parseBill(ingested.normalized);
-            setBillRecords((prev) => [...prev, record]);
+            const parsed = parseBill(ingested.normalized);
+            const record = {
+              ...parsed,
+              sourceName: fileData.name,
+              shopName: guessShopNameFromFile(fileData.name),
+            };
+            setBillRecords((prev) => replaceBillRecordSource(prev, record));
           }
         }
       }
     } catch (error) {
       reportError("导入账单", error);
     }
-  }, [reportError, setBillRecords, setOpBillLines, showToast]);
+  }, [reportError, setBillRecords, showToast]);
 
   const handleImportCommissionDetails = useCallback(async () => {
     try {
