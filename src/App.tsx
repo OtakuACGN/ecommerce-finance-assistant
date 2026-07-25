@@ -40,11 +40,7 @@ import {
   AdDay,
   AdProduct,
   CostSettings,
-  ShopFeeOverride,
-  COST_SETTING_TEMPLATES,
-  applyCostTemplate,
   DEFAULT_EXPRESS_RULES,
-  ExpressShipRule,
   OperatingReport,
   PddBillLine,
   PddOrder,
@@ -65,13 +61,13 @@ import {
   sourceKindLabel,
 } from "./services/pddBusiness";
 import {
-  cloneDefaultCostSettings,
   loadOpCostSettings,
   saveOpCostSettings,
   normalizeCostSettings,
   filterOrderTable,
   type OrderTableFilter,
 } from "./services/opCostSettings";
+import { resolveOperatingViewTable } from "./services/opViewTables";
 
 import {
   PRODUCT_IMPORT_MODE_KEY,
@@ -84,6 +80,7 @@ import {
 import OperatingActionBar from "./components/OperatingActionBar";
 import { useBillRefundHandlers } from "./hooks/useBillRefundHandlers";
 import { useMappingReconcileHandlers } from "./hooks/useMappingReconcileHandlers";
+import { useOpCostSettingsHandlers } from "./hooks/useOpCostSettingsHandlers";
 import type { AppTab } from "./types/appTab";
 import {
   formatOpBillPeriod,
@@ -869,114 +866,21 @@ function App() {
     }
   }, [opOrders, opBillLines, opProducts, opAds, opAdProducts, opCostSettings, showToast]);
 
-  const applyRankSort = useCallback(
-    (table: any[][] | undefined, mode: "profit" | "loss") => {
-      if (!table || table.length <= 1) return table || [];
-      if (mode === "profit") return table;
-      const header = table[0];
-      const rows = table.slice(1).slice().reverse();
-      const ranked = rows.map((r, i) => {
-        const copy = [...r];
-        if (typeof copy[0] === "number" || /^\d+$/.test(String(copy[0]))) {
-          copy[0] = i + 1;
-        }
-        return copy;
-      });
-      return [header, ...ranked];
-    },
-    [],
-  );
-
   const handleShowOperatingView = useCallback(
     (view: typeof opView, rankSort: "profit" | "loss" = opRankSort) => {
       if (!opReport) return;
       setOpView(view);
-      const unmatchedFallback = [
-        [
-          "待补键",
-          "商品名称",
-          "规格名称",
-          "商家编码-规格",
-          "商家编码-商品",
-          "商品ID",
-          "关联订单数",
-          "商家实收合计",
-          "样例订单号",
-        ],
-        ...opReport.unmatchedSkus.map((u) => [
-          u.key,
-          u.productName,
-          u.specName,
-          u.merchantSku,
-          u.merchantSpu,
-          u.productId,
-          u.count,
-          u.amount.toFixed(2),
-          u.sampleOrderIds,
-        ]),
-      ];
-      const tableMap: Record<string, any[][]> = {
-        summary: opReport.summaryTable,
-        orders: opReport.orderTable,
-        rates: opReport.rateTable,
-        shipLoss: opReport.shipLossTable,
-        billTypes: opReport.billTypeTable,
-        billWide: opReport.billWideTable,
-        ads: opReport.adTable,
-        products: opReport.productMapTable,
-        unmatched: opReport.unmatchedTable?.length
-          ? opReport.unmatchedTable
-          : unmatchedFallback,
-        period: opReport.periodTable,
-        express: opReport.expressTable,
-        expressAlert: opReport.expressAlertTable || [],
-        matchMethod: opReport.matchMethodTable || [],
-        shops: opReport.shopTable,
-        spuRank: applyRankSort(opReport.spuTable, rankSort),
-        skuRank: applyRankSort(opReport.skuTable, rankSort),
-        salesRankSku: opReport.salesRankSkuTable || [],
-        salesRankSpu: opReport.salesRankSpuTable || [],
-        productReturn: opReport.productReturnTable || [],
-        lossDiagnosis: opReport.lossDiagnosisTable || [],
-        bossOnePager: opReport.bossOnePagerTable || [],
-        anomalies: opReport.anomalySummaryTable || [],
-        anomalyNeg: opReport.anomalyNegProfitTable || [],
-        anomalyUnmatched: opReport.anomalyUnmatchedTable || [],
-        anomalyFeeFlip: opReport.anomalyFeeFlipTable || [],
-        anomalyHighSku: opReport.anomalyHighRefundSkuTable || [],
-        anomalyPartial: opReport.anomalyPartialRefundTable || [],
-      };
-      let table = tableMap[view] || opReport.summaryTable;
-      // 商品/待补视图：待填成本行置顶
-      if ((view === "products" || view === "unmatched") && table.length > 1) {
-        const header = table[0] || [];
-        const flagIdx = header.findIndex((h) => {
-          const s = String(h);
-          return s.includes("填写标记") || s.includes("成本匹配") || s === "有成本";
-        });
-        const costIdx = header.findIndex((h) => /成本/.test(String(h)));
-        const idx = flagIdx >= 0 ? flagIdx : costIdx;
-        if (idx >= 0) {
-          const body = table.slice(1).slice();
-          body.sort((ra, rb) => {
-            const sa = String(ra[idx] ?? "");
-            const sb = String(rb[idx] ?? "");
-            const pa = /待填|否|缺|未|0$/.test(sa) || Number(sa) === 0 ? 0 : 1;
-            const pb = /待填|否|缺|未|0$/.test(sb) || Number(sb) === 0 ? 0 : 1;
-            if (pa !== pb) return pa - pb;
-            return 0;
-          });
-          table = [header, ...body];
-        }
-      }
-      if (view === "orders" && orderTableFilter !== "all") {
-        table = filterOrderTable(opReport.orderTable, orderTableFilter);
-      }
+      const table = resolveOperatingViewTable(
+        opReport,
+        view,
+        rankSort,
+        orderTableFilter,
+      );
       if (view !== "orders") setOrderTableFilter("all");
       setCurrentData(table);
       setCurrentHeaders(table[0] || []);
     },
-    [opReport, opRankSort, applyRankSort, orderTableFilter],
+    [opReport, opRankSort, orderTableFilter],
   );
 
   const showFilteredOrders = useCallback(
@@ -1274,98 +1178,19 @@ function App() {
     [opOrders, opProducts, productMasterMeta.lastExportedAt, pushOpSource, showToast],
   );
 
-  const updateExpressRule = useCallback(
-    (index: number, patch: Partial<ExpressShipRule>) => {
-      setOpCostSettings((s) => {
-        const rules = s.expressRules.map((r, i) =>
-          i === index ? { ...r, ...patch } : r,
-        );
-        return { ...s, expressRules: rules };
-      });
-    },
-    [],
-  );
-
-  const handleResetOpCostSettings = useCallback(() => {
-    setOpCostSettings(cloneDefaultCostSettings());
-    showToast("已恢复默认运费/包材参数", "success");
-  }, [showToast]);
-
-  const handleApplyCostTemplate = useCallback(
-    (templateId: string) => {
-      const t = COST_SETTING_TEMPLATES.find((x) => x.id === templateId);
-      setOpCostSettings((s) => applyCostTemplate(s, templateId));
-      showToast(t ? `已套用模板：${t.name}` : "模板不存在", t ? "success" : "warning");
-    },
-    [showToast],
-  );
-
-  const handleAddShopFeeOverride = useCallback(() => {
-    setOpCostSettings((s) => ({
-      ...s,
-      shopFeeOverrides: [
-        ...(s.shopFeeOverrides || []),
-        {
-          shopName: "",
-          brandPointPct: null,
-          ecommerceTaxPct: null,
-          feeBaseMode: "",
-        } as ShopFeeOverride,
-      ],
-    }));
-  }, []);
-
-  const handleUpdateShopFeeOverride = useCallback(
-    (index: number, patch: Partial<ShopFeeOverride>) => {
-      setOpCostSettings((s) => {
-        const list = [...(s.shopFeeOverrides || [])];
-        list[index] = { ...list[index], ...patch };
-        return { ...s, shopFeeOverrides: list };
-      });
-    },
-    [],
-  );
-
-  const handleRemoveShopFeeOverride = useCallback((index: number) => {
-    setOpCostSettings((s) => ({
-      ...s,
-      shopFeeOverrides: (s.shopFeeOverrides || []).filter((_, i) => i !== index),
-    }));
-  }, []);
-
-  const handleSyncShopsToOverrides = useCallback(() => {
-    const names = new Set<string>();
-    for (const o of opOrders) names.add(normalizeShopName(o.shopName));
-    if (names.size === 0) {
-      showToast("请先导入订单（带店铺名）", "warning");
-      return;
-    }
-    setOpCostSettings((s) => {
-      const existing = new Map(
-        (s.shopFeeOverrides || []).map((x) => [
-          normalizeShopName(x.shopName),
-          x,
-        ]),
-      );
-      const merged: ShopFeeOverride[] = [];
-      for (const name of Array.from(names).sort()) {
-        merged.push(
-          existing.get(name) || {
-            shopName: name,
-            brandPointPct: null,
-            ecommerceTaxPct: null,
-            feeBaseMode: "",
-          },
-        );
-      }
-      // keep manual rows not in orders
-      for (const [k, v] of existing) {
-        if (!names.has(k) && String(v.shopName || "").trim()) merged.push(v);
-      }
-      return { ...s, shopFeeOverrides: merged };
-    });
-    showToast(`已同步 ${names.size} 个店铺到覆盖表`, "success");
-  }, [opOrders, showToast]);
+  const {
+    updateExpressRule,
+    handleResetOpCostSettings,
+    handleApplyCostTemplate,
+    handleAddShopFeeOverride,
+    handleUpdateShopFeeOverride,
+    handleRemoveShopFeeOverride,
+    handleSyncShopsToOverrides,
+  } = useOpCostSettingsHandlers({
+    opOrders,
+    setOpCostSettings,
+    showToast,
+  });
 
   const handleClearOperating = useCallback(() => {
     setOpOrders([]);

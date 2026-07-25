@@ -4,13 +4,13 @@
 
 **仓库：** https://github.com/OtakuACGN/ecommerce-finance-assistant
 
-**当前版本：** 1.2.7
+**当前版本：** 1.2.8
 
 ## 便携版（推荐）
 
-1. 本机构建产物：`release/DianCaiTong-Portable-1.2.7.zip` / `release/win-unpacked/`
+1. 本机构建产物：`release/DianCaiTong-Portable-1.2.8.zip` / `release/win-unpacked/`
 2. 解压后双击 **店财通.exe**（无需安装）
-3. 安装包：`release/DianCaiTong-Setup-1.2.7.exe`
+3. 安装包：`release/DianCaiTong-Setup-1.2.8.exe`
 
 也可源码目录双击 `start-app.bat`（需已执行过 `npm run build:dir`）。
 
@@ -67,7 +67,7 @@ npm run build
 便携 zip 示例：
 
 ```powershell
-Compress-Archive -Path release\win-unpacked\* -DestinationPath release\DianCaiTong-Portable-1.2.7.zip -Force
+Compress-Archive -Path release\win-unpacked\* -DestinationPath release\DianCaiTong-Portable-1.2.8.zip -Force
 ```
 
 ## 技术栈
