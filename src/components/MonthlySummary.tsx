@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { exportToExcel } from "../utils/excel";
 import { saveDataFile } from "../utils/desktop";
 import type { BillRecord } from "../services/businessLogic";
-import RebateCalculator from "./RebateCalculator";
 
 interface PlatformSummary {
   platform: string;
@@ -386,11 +385,6 @@ export default function MonthlySummary({
             )}
           </div>
         </div>
-
-        <RebateCalculator
-          defaultGmv={currentTotal.gmv}
-          desktopReady={desktopReady}
-        />
 
         {/* 总览卡片 */}
         {currentSummary.length > 0 && (

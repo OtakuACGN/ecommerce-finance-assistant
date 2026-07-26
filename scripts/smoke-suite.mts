@@ -531,15 +531,6 @@ const pdd = await load("src/services/pddBusiness.ts");
   // Generic module guardrails.
   {
     const logic = await load("src/services/businessLogic.ts");
-    const defaultRebate = logic.calculateRebate(
-      80,
-      logic.DEFAULT_REBATE_TIERS || [],
-    );
-    ok(
-      "rebate.default_tiers_progressive",
-      Math.abs(defaultRebate.totalRebate - 1.9) < 0.0001,
-      JSON.stringify(defaultRebate),
-    );
     const legacyReconcile = logic.reconcilePayments(
       [
         ["订单号", "订单金额"],

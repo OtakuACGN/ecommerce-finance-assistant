@@ -39,4 +39,11 @@ describe("店财通主导航", () => {
     expect(screen.getByRole("main").getAttribute("id")).toBe("main-content");
     expect(screen.getByText(/浏览器预览模式/)).not.toBeNull();
   });
+
+  it("月度汇总不再展示已废弃的品牌阶梯返利", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "月度汇总" }));
+
+    expect(screen.queryByText(/品牌阶梯返利|品牌返点/)).toBeNull();
+  });
 });

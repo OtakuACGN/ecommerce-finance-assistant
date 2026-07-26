@@ -213,8 +213,6 @@ function App() {
     }
   }, [productImportMode]);
 
-
-  // 返利相关
   const [runtimeNotice, setRuntimeNotice] = useState<string | null>(
     desktopReady
       ? null

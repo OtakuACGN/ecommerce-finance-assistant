@@ -21,22 +21,6 @@ export interface BillRecord {
   rawData: any[][];
 }
 
-export interface RebateTier {
-  min: number;
-  max: number;
-  rate: number;
-  label: string;
-}
-
-/** 常用品牌阶梯返利模板（GMV 单位：万元），可在界面按合同修改。 */
-export const DEFAULT_REBATE_TIERS: RebateTier[] = [
-  { min: 0, max: 50, rate: 2, label: "0-50万" },
-  { min: 50, max: 100, rate: 3, label: "50-100万" },
-  { min: 100, max: 200, rate: 4, label: "100-200万" },
-  { min: 200, max: 500, rate: 5, label: "200-500万" },
-  { min: 500, max: 0, rate: 6, label: "500万以上" },
-];
-
 export interface RefundOrder {
   platform: string;
   orderId: string;
@@ -227,52 +211,6 @@ export function parseCommissionDetails(fileData: FileData): CommissionDetail[] {
   }
 
   return details;
-}
-
-export function calculateRebate(gmvWan: number, tiers: RebateTier[]) {
-  let remaining = gmvWan;
-  let totalRebate = 0;
-  const details: any[][] = [];
-  for (const tier of tiers) {
-    if (remaining <= 0) break;
-    const tierMax = tier.max > 0 ? tier.max : remaining + 1;
-    const applicable = Math.min(remaining, tierMax - tier.min);
-    if (applicable > 0) {
-      const rebate = (applicable * tier.rate) / 100;
-      totalRebate += rebate;
-      details.push([
-        tier.label,
-        `${tier.min}-${tier.max === 0 ? "∞" : tier.max}万`,
-        `${tier.rate}%`,
-        `${applicable.toFixed(2)}万`,
-        `${rebate.toFixed(4)}万`,
-      ]);
-      remaining -= applicable;
-    }
-  }
-  return { totalRebate, details };
-}
-
-export function generateRebateTable(
-  gmvYuan: number,
-  tiers: RebateTier[]
-): any[][] {
-  if (gmvYuan <= 0) return [];
-  const gmvWan = gmvYuan / 10000;
-  const { totalRebate, details } = calculateRebate(gmvWan, tiers);
-  const headers = [
-    "阶梯区间",
-    "区间范围(万)",
-    "返利比例",
-    "适用GMV(万)",
-    "返利金额(万)",
-  ];
-  return [
-    headers,
-    ...details,
-    ["", "", "", "返利合计(万)", totalRebate.toFixed(4)],
-    ["", "", "", "折合人民币", `¥${(totalRebate * 10000).toFixed(2)}`],
-  ];
 }
 
 export function reconcilePayments(
