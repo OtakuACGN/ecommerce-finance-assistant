@@ -431,11 +431,11 @@ const pdd = await load("src/services/pddBusiness.ts");
       JSON.stringify(realPlatformSubsidy.totals),
     );
 
-    const duplicateOrderAcrossShops = pdd.buildOperatingReport(
+    const orderAndBillWithDifferentSourceLabels = pdd.buildOperatingReport(
       [
         {
-          orderId: "SAME-ORDER",
-          productName: "店A商品",
+          orderId: "GLOBAL-ORDER-ID",
+          productName: "测试商品",
           status: "已收货",
           afterSale: "",
           qty: 1,
@@ -444,82 +444,39 @@ const pdd = await load("src/services/pddBusiness.ts");
           merchantReceived: 100,
           platformDiscount: 0,
           shopDiscount: 0,
-          productId: "A-P1",
+          productId: "P1",
           specName: "标准",
-          merchantSku: "A-SKU",
-          merchantSpu: "A-SPU",
+          merchantSku: "SKU",
+          merchantSpu: "SPU",
           dealTime: "2026-07-01",
           shipTime: "",
           confirmTime: "2026-07-02",
           postage: 0,
           expressNo: "",
           expressCompany: "",
-          shopName: "店A",
-        },
-        {
-          orderId: "SAME-ORDER",
-          productName: "店B商品",
-          status: "已收货",
-          afterSale: "",
-          qty: 1,
-          goodsTotal: 200,
-          buyerPaid: 200,
-          merchantReceived: 200,
-          platformDiscount: 0,
-          shopDiscount: 0,
-          productId: "B-P1",
-          specName: "标准",
-          merchantSku: "B-SKU",
-          merchantSpu: "B-SPU",
-          dealTime: "2026-07-01",
-          shipTime: "",
-          confirmTime: "2026-07-02",
-          postage: 0,
-          expressNo: "",
-          expressCompany: "",
-          shopName: "店B",
+          shopName: "订单导出文件",
         },
       ],
       [
         {
-          orderId: "SAME-ORDER",
+          orderId: "GLOBAL-ORDER-ID",
           time: "2026-07-02",
           income: 100,
           expense: 0,
           billType: "交易收入",
           remark: "",
           bizDesc: "",
-          shopName: "店A",
+          shopName: "账务明细文件",
         },
         {
-          orderId: "SAME-ORDER",
+          orderId: "GLOBAL-ORDER-ID",
           time: "2026-07-02",
           income: 0,
           expense: 10,
           billType: "技术服务费",
           remark: "",
           bizDesc: "",
-          shopName: "店A",
-        },
-        {
-          orderId: "SAME-ORDER",
-          time: "2026-07-02",
-          income: 200,
-          expense: 0,
-          billType: "交易收入",
-          remark: "",
-          bizDesc: "",
-          shopName: "店B",
-        },
-        {
-          orderId: "SAME-ORDER",
-          time: "2026-07-02",
-          income: 0,
-          expense: 20,
-          billType: "技术服务费",
-          remark: "",
-          bizDesc: "",
-          shopName: "店B",
+          shopName: "账务明细文件",
         },
       ],
       [],
@@ -527,27 +484,13 @@ const pdd = await load("src/services/pddBusiness.ts");
       { ...pdd.DEFAULT_COST_SETTINGS, adAllocateMode: "none" },
       [],
     );
-    const shopAProfit = duplicateOrderAcrossShops.orderProfits.find(
-      (row: any) => row.shopName === "店A",
-    );
-    const shopBProfit = duplicateOrderAcrossShops.orderProfits.find(
-      (row: any) => row.shopName === "店B",
-    );
+    const matchedProfit = orderAndBillWithDifferentSourceLabels.orderProfits[0];
     ok(
-      "bill.duplicate_order_id_isolated_by_shop",
-      shopAProfit?.billIncome === 100 &&
-        shopAProfit?.techFee === 10 &&
-        shopBProfit?.billIncome === 200 &&
-        shopBProfit?.techFee === 20,
-      JSON.stringify({
-        shopA: shopAProfit && {
-          billIncome: shopAProfit.billIncome,
-          techFee: shopAProfit.techFee,
-        },
-        shopB: shopBProfit && {
-          billIncome: shopBProfit.billIncome,
-          techFee: shopBProfit.techFee,
-        },
+      "bill.global_order_id_matches_across_source_labels",
+      matchedProfit?.billIncome === 100 && matchedProfit?.techFee === 10,
+      JSON.stringify(matchedProfit && {
+        billIncome: matchedProfit.billIncome,
+        techFee: matchedProfit.techFee,
       }),
     );
 

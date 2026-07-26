@@ -99,6 +99,60 @@ describe("refund classification", () => {
     expect(report.orderProfits[0].revenue).toBe(80);
   });
 
+  it("matches a refund by globally unique order id when imported source shop labels differ", () => {
+    const report = buildOperatingReport(
+      [{
+        orderId: "CROSS-SOURCE-PARTIAL-1",
+        productName: "测试商品",
+        status: "已收货，退款成功",
+        afterSale: "仅退款成功",
+        qty: 1,
+        goodsTotal: 100,
+        buyerPaid: 100,
+        merchantReceived: 100,
+        platformDiscount: 0,
+        shopDiscount: 0,
+        productId: "P1",
+        specName: "标准",
+        merchantSku: "SKU1",
+        merchantSpu: "SPU1",
+        dealTime: "2026-06-10",
+        shipTime: "2026-06-11",
+        confirmTime: "2026-06-15",
+        postage: 0,
+        expressNo: "YT1",
+        expressCompany: "圆通",
+        shopName: "订单导出文件",
+      }],
+      [{
+        orderId: "CROSS-SOURCE-PARTIAL-1",
+        time: "2026-07-02",
+        income: 0,
+        expense: 20,
+        billType: "退款",
+        remark: "",
+        bizDesc: "",
+        shopName: "账务明细文件",
+      }],
+      [],
+      [],
+      {
+        ...DEFAULT_COST_SETTINGS,
+        adAllocateMode: "none",
+        defaultPackCost: 0,
+        firstWeightFee: 0,
+        additionalWeightFee: 0,
+        expressRules: [],
+      },
+      [],
+    );
+
+    expect(report.summary.fullRefundCount).toBe(0);
+    expect(report.summary.partialRefundCount).toBe(1);
+    expect(report.orderProfits[0].refundKind).toBe("partial");
+    expect(report.orderProfits[0].refundAmount).toBe(20);
+  });
+
   it("does not guess full or partial when neither ledger income nor order amount is available", () => {
     const result = analyzeOrderRefund(
       {

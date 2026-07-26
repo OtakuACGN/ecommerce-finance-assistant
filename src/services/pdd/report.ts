@@ -42,21 +42,7 @@ export function buildOperatingReport(
   adProducts: AdProduct[] = [],
 ): OperatingReport {
   const { byOrder, byType, totals } = aggregatePddBill(billLines);
-  const namedOrderShops = new Set(
-    orders
-      .map((order) => normalizeShopName(order.shopName))
-      .filter((shop) => shop !== "默认店铺"),
-  );
-  const allowUnscopedBillFallback = namedOrderShops.size <= 1;
-  const billForOrder = (order: PddOrder) => {
-    const scopedKey = billOrderKey(order.orderId, order.shopName);
-    const scoped = byOrder.get(scopedKey);
-    if (scoped) return scoped;
-    if (allowUnscopedBillFallback && scopedKey !== order.orderId) {
-      return byOrder.get(order.orderId);
-    }
-    return undefined;
-  };
+  const billForOrder = (order: PddOrder) => byOrder.get(billOrderKey(order.orderId));
   const indexes = buildProductIndexes(products);
   const unmatchedMap = new Map<
     string,

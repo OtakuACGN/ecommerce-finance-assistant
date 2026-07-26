@@ -20,7 +20,6 @@ import {
   findColExactThen,
   cellTime,
 } from "./helpers";
-import { normalizeShopName } from "./logistics";
 
 export function normalizeHeader(h: any): string {
   return String(h ?? "")
@@ -236,10 +235,10 @@ export function parsePddBillLines(fileData: FileData): PddBillLine[] {
   })).filter((l) => l.orderId || l.billType || l.income || l.expense);
 }
 
-export function billOrderKey(orderId: string, shopName?: string): string {
-  const id = String(orderId || "(无订单号)").trim() || "(无订单号)";
-  const shop = normalizeShopName(shopName);
-  return shop === "默认店铺" ? id : `${shop}||${id}`;
+export function billOrderKey(orderId: string): string {
+  // 订单号是全局唯一业务主键。shopName 由导入文件名推断，订单文件与账务文件
+  // 往往不同，不能参与账务匹配，否则同一订单的退款会被误判为“无账务全额退”。
+  return String(orderId || "(无订单号)").trim() || "(无订单号)";
 }
 
 function classifyBillLine(
@@ -314,7 +313,7 @@ export function aggregatePddBill(lines: PddBillLine[]): {
     byType.set(typeKey, typeAgg);
 
     const orderId = line.orderId || "(无订单号)";
-    const orderKey = billOrderKey(orderId, line.shopName);
+    const orderKey = billOrderKey(orderId);
     const agg =
       byOrder.get(orderKey) ||
       ({
