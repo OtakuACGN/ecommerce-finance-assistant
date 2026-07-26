@@ -111,15 +111,41 @@ export function analyzeOrderRefund(
 
   if (hasBillMoney) {
     const settleBase = billIncome > 0 ? billIncome : Math.max(gt, mr, 0);
+    if (billIncome <= 0 && settleBase <= 0) {
+      return {
+        refundKind: "unknown",
+        baseAmount,
+        billRefund,
+        billResidual,
+        merchantReceived: mr,
+        refundAmount: billRefund,
+        refundRatio: 0,
+        residualRatio: 0,
+        revenue: 0,
+        compareNote:
+          "退款金额 " +
+          billRefund.toFixed(2) +
+          "，但缺少原交易收入和订单金额，无法判断全额或部分退",
+      };
+    }
     const eps = Math.max(0.05, Math.max(settleBase, billRefund, 1) * 0.02);
-    const residual = Math.max(0, billResidual);
+    // 跨月退款常只有本月退款流水，原交易收入在上月。此时不能把
+    // billIncome=0 推导出的残留 0 当成整单全额退，应回退订单金额作对照。
+    const residual =
+      billIncome > 0
+        ? Math.max(0, billResidual)
+        : Math.max(0, settleBase - billRefund + subsidy);
     // 账务退款覆盖账务收入，或账务残留≈0 且确实发生退款 → 全额退
     const incomeFullyRefunded = billIncome > 0 && billRefund + eps >= billIncome;
     const residualTiny = residual <= eps;
     const refundCoversSettle =
       settleBase > 0 ? billRefund + eps >= settleBase : billRefund > 0 && residualTiny;
 
-    if (incomeFullyRefunded || (residualTiny && (refundCoversSettle || billRefund > 0))) {
+    if (
+      incomeFullyRefunded ||
+      refundCoversSettle ||
+      (residualTiny && billRefund > 0)
+    ) {
       const refundAmount = billRefund > 0 ? billRefund : settleBase;
       return {
         refundKind: "full",
@@ -181,10 +207,12 @@ export function analyzeOrderRefund(
       residualRatio,
       revenue: finalRevenue,
       compareNote:
-        "部分退：账务退款 " +
+        (billIncome > 0 ? "部分退：" : "部分退(跨月退款)：") +
+        "账务退款 " +
         billRefund.toFixed(2) +
-        " / 账务收入 " +
-        billIncome.toFixed(2) +
+        (billIncome > 0
+          ? " / 账务收入 " + billIncome.toFixed(2)
+          : " / 订单对照金额 " + settleBase.toFixed(2)) +
         "，确认收入 " +
         finalRevenue.toFixed(2) +
         "（只扣退款额）",
