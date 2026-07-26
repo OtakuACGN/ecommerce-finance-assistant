@@ -254,14 +254,21 @@ function classifyBillLine(
     if (/手续费|服务费|费率/.test(t)) return "other";
     return "withdraw";
   }
-  // 技术服务费退款/返还必须先于通用“退款”判断，否则会误扣商品收入。
-  if (/技术服务费|基础技术服务费|服务费返还|服务费退回/.test(t)) {
-    if (line.income > 0 || /退款|返还|退回/.test(t)) return "tech_refund";
+  // 服务费/佣金返还必须先于通用“退款”判断：它冲减平台费用，不是商品退款或补贴。
+  const isPlatformFeeRefund =
+    /(?:技术服务费|基础技术服务费|平台服务费|服务费|佣金|平台扣点|扣点费).*(?:退款|返还|退回|返款)|(?:退款|返还|退回|返款).*(?:技术服务费|基础技术服务费|平台服务费|服务费|佣金|平台扣点|扣点费)/.test(
+      t,
+    );
+  if (isPlatformFeeRefund) return "tech_refund";
+  if (/技术服务费|基础技术服务费|平台服务费|佣金|平台扣点|扣点费/.test(t)) {
+    if (line.income > 0) return "tech_refund";
     return "tech";
   }
+  // 明确标注为平台补贴/返点的流水保留收入属性；支出则作为补贴冲回。
+  // 即使备注含“退款”，也不是商品货款退款（服务费返还已在上方优先识别）。
+  if (/补贴|优惠券|奖励|返点|活动|满减/.test(t)) return "subsidy";
   if (/退款|退货|售后/.test(t)) return "refund";
   if (/交易收入|订单收入|货款/.test(t)) return "income";
-  if (/补贴|优惠券|奖励|返点|佣金返还|活动|满减/.test(t)) return "subsidy";
   if (/其他服务|扣款|罚款|违约|运费险|保险/.test(t)) return "other";
   return "other";
 }
@@ -365,13 +372,13 @@ export function aggregatePddBill(lines: PddBillLine[]): {
   }
 
   for (const agg of byOrder.values()) {
-    const techNet = Math.max(0, agg.techFee - agg.techFeeRefund);
+    const techNet = roundMoney(agg.techFee - agg.techFeeRefund);
     agg.techFee = techNet;
     agg.net = roundMoney(
       agg.income - agg.refund - techNet - agg.otherFee + agg.subsidy,
     );
   }
-  const techNetTotal = Math.max(0, totals.techFee - totals.techFeeRefund);
+  const techNetTotal = roundMoney(totals.techFee - totals.techFeeRefund);
   totals.techFee = techNetTotal;
   totals.net = roundMoney(
     totals.income -
@@ -397,7 +404,7 @@ export function billRecordFromPdd(fileData: FileData, lines: PddBillLine[]): Bil
     "订单号",
     "交易收入",
     "退款",
-    "技术服务费",
+    "平台服务费(净)",
     "其他费用",
     "补贴",
     "账单净额",

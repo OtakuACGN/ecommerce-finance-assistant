@@ -311,7 +311,7 @@ export function buildOperatingReport(
     const taxPct = Math.max(0, Number(shopRates.ecommerceTaxPct) || 0);
     const brandPointFee = feeBase * (brandPct / 100);
     const ecommerceTaxFee = feeBase * (taxPct / 100);
-    // 仅控制账务技术服务费/其他费用是否进毛利；绝不覆盖品牌扣点
+    // 仅控制账务平台服务费(净)/其他费用是否进毛利；绝不覆盖品牌扣点
     const feeStackMode = settings.feeStackMode || "both";
     let fees = billPlatformFees;
     if (feeStackMode === "settings_only") {
@@ -848,7 +848,7 @@ export function buildOperatingReport(
       "店铺", "订单号", "月份", "成交时间", "发货时间", "快递公司", "运费规则", "商品", "规格", "商家编码",
       "商品编码", "商品ID", "状态", "售后", "数量", "商品总价", "商家实收", "确认收入", "单位成本", "商品成本", "包材",
       "重量kg", "运费", "邮费收入", "净运费", "损耗运费", "退货损耗", "二次包装", "品牌扣点", "电商税", "分摊广告",
-      "成本匹配", "匹配方式", "快递规则命中", "账单收入", "账单退款", "技术服务费", "其他费用", "补贴",
+      "成本匹配", "匹配方式", "快递规则命中", "账单收入", "账单退款", "平台服务费(净)", "其他费用", "补贴",
       "是否发货", "是否退款", "退款类型", "实退金额", "退款占比", "保留占比", "实收vs退款说明",
       "是否成交", "发货后退款", "已发货未成交", "毛利(未扣广告)", "毛利(扣广告)",
     ],
@@ -959,8 +959,8 @@ export function buildOperatingReport(
     ["成本未匹配订单", summary.costUnmatchedOrders],
     ["账单交易收入", summary.billIncome.toFixed(2)],
     ["账单退款", summary.billRefund.toFixed(2)],
-    ["进自然月毛利·账务技术服务费合计(净)", summary.techFee.toFixed(2)],
-    ["其中可归因订单·技术服务费", (summary.techFeeAttributed ?? 0).toFixed(2)],
+    ["进自然月毛利·账务平台服务费合计(净)", summary.techFee.toFixed(2)],
+    ["其中可归因订单·平台服务费(净)", (summary.techFeeAttributed ?? 0).toFixed(2)],
     ["进自然月毛利·账务其他费用合计", summary.otherFee.toFixed(2)],
     ["其中可归因订单·其他费用", (summary.otherFeeAttributed ?? 0).toFixed(2)],
     ["补贴", summary.subsidy.toFixed(2)],
@@ -1279,7 +1279,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
   ];
 
   const billWideTable: any[][] = [
-    ["订单号", "交易收入", "退款", "技术服务费", "其他费用", "补贴", "账单净额", "流水行数"],
+    ["订单号", "交易收入", "退款", "平台服务费(净)", "其他费用", "补贴", "账单净额", "流水行数"],
     ...Array.from(byOrder.values()).map((o) => [
       o.orderId, o.income.toFixed(2), o.refund.toFixed(2), o.techFee.toFixed(2),
       o.otherFee.toFixed(2), o.subsidy.toFixed(2), o.net.toFixed(2), o.lines,
@@ -1986,7 +1986,7 @@ const matchMethodMap = new Map<string, { count: number; amount: number }>();
     [
       "账务平台费",
       settings.feeStackMode === "settings_only" ? "不进毛利" : "进毛利",
-      "来自账务技术服务费/其他费用；与品牌扣点无关",
+      "来自账务平台服务费(净)/其他费用；与品牌扣点无关",
     ],
     [
       "品牌扣点",

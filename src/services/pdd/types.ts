@@ -459,9 +459,9 @@ export interface OperatingSummary {
   costUnmatchedAmount: number;
   billIncome: number;
   billRefund: number;
-  /** 账务技术服务费合计(净)，展示用 */
+  /** 账务平台服务费合计(净)，负数表示返还大于当期扣费 */
   techFee: number;
-  /** 可归因到订单明细的技术服务费；自然月利润仍按账务合计扣减 */
+  /** 可归因到订单明细的平台服务费(净)；自然月利润仍按账务合计扣减 */
   techFeeAttributed: number;
   /** 账务其他费用合计，展示用 */
   otherFee: number;

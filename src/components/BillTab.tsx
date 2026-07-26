@@ -3,6 +3,12 @@ import { exportToExcel } from "../utils/excel";
 import { saveDataFile } from "../utils/desktop";
 import type { BillRecord, RefundOrder } from "../services/businessLogic";
 
+function formatNetExpense(value: number, digits = 0) {
+  if (value < 0) return `+¥${Math.abs(value).toFixed(digits)}`;
+  if (value > 0) return `-¥${value.toFixed(digits)}`;
+  return `¥${value.toFixed(digits)}`;
+}
+
 export interface BillTabProps {
   billRecords: BillRecord[];
   refundRecords: RefundOrder[];
@@ -161,7 +167,7 @@ export default function BillTab(props: BillTabProps) {
                         "订单数",
                         "退款",
                         "佣金",
-                        "技术服务费",
+                        "平台服务费(净)",
                         "其他费用",
                         "补贴",
                         "净收款",
@@ -204,8 +210,12 @@ export default function BillTab(props: BillTabProps) {
                         <td className="px-4 py-2.5 text-right text-red-600">
                           -¥{b.commission.toFixed(0)}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-orange-600">
-                          -¥{b.techFee.toFixed(0)}
+                        <td
+                          className={`px-4 py-2.5 text-right ${
+                            b.techFee < 0 ? "text-green-600" : "text-orange-600"
+                          }`}
+                        >
+                          {formatNetExpense(b.techFee)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-amber-700">
                           -¥{amount(b.otherFee).toFixed(0)}
@@ -263,12 +273,23 @@ export default function BillTab(props: BillTabProps) {
                             .reduce((s, b) => s + b.commission, 0)
                             .toFixed(0)}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-orange-600">
-                          -¥
-                          {billRecords
-                            .reduce((s, b) => s + b.techFee, 0)
-                            .toFixed(0)}
-                        </td>
+                        {(() => {
+                          const totalTechFee = billRecords.reduce(
+                            (sum, bill) => sum + bill.techFee,
+                            0,
+                          );
+                          return (
+                            <td
+                              className={`px-4 py-2.5 text-right ${
+                                totalTechFee < 0
+                                  ? "text-green-600"
+                                  : "text-orange-600"
+                              }`}
+                            >
+                              {formatNetExpense(totalTechFee)}
+                            </td>
+                          );
+                        })()}
                         <td className="px-4 py-2.5 text-right text-amber-700">
                           -¥
                           {billRecords
@@ -568,10 +589,20 @@ export default function BillTab(props: BillTabProps) {
                   -¥{showBillDetail.commission.toFixed(2)}
                 </div>
               </div>
-              <div className="bg-orange-50 rounded-lg px-4 py-2 text-center">
-                <div className="text-xs text-gray-500">技术服务费</div>
-                <div className="font-bold text-lg text-orange-600">
-                  -¥{showBillDetail.techFee.toFixed(2)}
+              <div
+                className={`rounded-lg px-4 py-2 text-center ${
+                  showBillDetail.techFee < 0 ? "bg-green-50" : "bg-orange-50"
+                }`}
+              >
+                <div className="text-xs text-gray-500">平台服务费(净)</div>
+                <div
+                  className={`font-bold text-lg ${
+                    showBillDetail.techFee < 0
+                      ? "text-green-600"
+                      : "text-orange-600"
+                  }`}
+                >
+                  {formatNetExpense(showBillDetail.techFee, 2)}
                 </div>
               </div>
               <div className="bg-amber-50 rounded-lg px-4 py-2 text-center">

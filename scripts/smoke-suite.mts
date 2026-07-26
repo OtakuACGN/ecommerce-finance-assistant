@@ -265,6 +265,55 @@ const pdd = await load("src/services/pddBusiness.ts");
       JSON.stringify(techRefund.totals),
     );
 
+    const serviceFeeReturn = pdd.aggregatePddBill([
+      {
+        orderId: "FEE-1",
+        time: "2026-06-01",
+        income: 0,
+        expense: 10,
+        billType: "平台服务费",
+        remark: "",
+        bizDesc: "订单佣金",
+      },
+      {
+        orderId: "FEE-1",
+        time: "2026-06-03",
+        income: 15,
+        expense: 0,
+        billType: "补贴/返点",
+        remark: "退款成功",
+        bizDesc: "退款后佣金返还",
+      },
+    ]);
+    ok(
+      "bill.service_fee_return_offsets_fee_not_subsidy",
+      serviceFeeReturn.totals.refund === 0 &&
+        serviceFeeReturn.totals.subsidy === 0 &&
+        serviceFeeReturn.totals.techFeeRefund === 15 &&
+        serviceFeeReturn.totals.techFee === -5 &&
+        serviceFeeReturn.totals.net === 5,
+      JSON.stringify(serviceFeeReturn.totals),
+    );
+
+    const realPlatformSubsidy = pdd.aggregatePddBill([
+      {
+        orderId: "SUBSIDY-1",
+        time: "2026-06-03",
+        income: 3,
+        expense: 0,
+        billType: "补贴/返点",
+        remark: "订单退款成功",
+        bizDesc: "平台活动补贴",
+      },
+    ]);
+    ok(
+      "bill.real_platform_subsidy_is_not_goods_refund",
+      realPlatformSubsidy.totals.refund === 0 &&
+        realPlatformSubsidy.totals.subsidy === 3 &&
+        realPlatformSubsidy.totals.net === 3,
+      JSON.stringify(realPlatformSubsidy.totals),
+    );
+
     const duplicateOrderAcrossShops = pdd.buildOperatingReport(
       [
         {

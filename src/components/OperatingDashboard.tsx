@@ -52,7 +52,7 @@ export default function OperatingDashboard({
                   ) : null}
                   {(opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0) > 1 ? (
                     <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 leading-relaxed">
-                      平台费口径：账务技术服务费合计 ¥{(opReport.summary.techFee || 0).toFixed(2)}，
+                      平台费口径：账务平台服务费合计(净) ¥{(opReport.summary.techFee || 0).toFixed(2)}，
                       其中可挂到订单明细 ¥{(opReport.summary.techFeeAttributed || 0).toFixed(2)}
                       （差额 ¥{(((opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0))).toFixed(2)} 未归因）。
                       自然月利润已扣账务合计；订单/SPU明细只展示可归因部分。

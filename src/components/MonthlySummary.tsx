@@ -225,7 +225,7 @@ export default function MonthlySummary({
       "订单数",
       "退款",
       "佣金",
-      "技术服务费",
+      "平台服务费(净)",
       "其他费用",
       "补贴/返点",
       "净收款",
@@ -509,7 +509,7 @@ export default function MonthlySummary({
                       佣金 (¥)
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
-                      技术服务费 (¥)
+                      平台服务费(净) (¥)
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs text-gray-500 font-medium">
                       其他费用 (¥)
@@ -579,7 +579,11 @@ export default function MonthlySummary({
                         <td className="px-4 py-2.5 text-right text-red-600">
                           {fmt(p.commission)}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-orange-600">
+                        <td
+                          className={`px-4 py-2.5 text-right ${
+                            p.techFee < 0 ? "text-green-600" : "text-orange-600"
+                          }`}
+                        >
                           {fmt(p.techFee)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-amber-700">
@@ -641,7 +645,13 @@ export default function MonthlySummary({
                     <td className="px-4 py-2.5 text-right text-red-600">
                       {fmt(currentTotal.commission)}
                     </td>
-                    <td className="px-4 py-2.5 text-right text-orange-600">
+                    <td
+                      className={`px-4 py-2.5 text-right ${
+                        currentTotal.techFee < 0
+                          ? "text-green-600"
+                          : "text-orange-600"
+                      }`}
+                    >
                       {fmt(currentTotal.techFee)}
                     </td>
                     <td className="px-4 py-2.5 text-right text-amber-700">
@@ -690,7 +700,7 @@ export default function MonthlySummary({
                 平均佣金率）
               </li>
               <li>
-                • <strong>交易收入</strong>、退款、技术服务费和其他费用均来自账务明细；
+                • <strong>交易收入</strong>、退款、平台服务费(净)和其他费用均来自账务明细；
                 净收款已经扣除退款及费用
               </li>
               <li>

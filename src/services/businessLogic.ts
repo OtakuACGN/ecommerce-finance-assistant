@@ -11,6 +11,7 @@ export interface BillRecord {
   totalAmount: number;
   orderCount: number;
   commission: number;
+  /** 平台服务费合计(净)；负数表示返还大于当期扣费 */
   techFee: number;
   subsidy: number;
   refundAmount?: number;
