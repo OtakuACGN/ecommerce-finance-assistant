@@ -121,6 +121,123 @@ async function main() {
     JSON.stringify(multiSkuFileResult.summary),
   );
 
+  const crossMonthAfter = after.parseAndAnalyzeAfterSales(
+    fd("after-cross-month.xlsx", [
+      [
+        "售后单号",
+        "平台售后状态",
+        "平台订单号",
+        "申请退款金额",
+        "申请时间",
+        "确认时间",
+      ],
+      ["SH-CROSS-1", "退款成功", "ORD-CROSS", 20, "2026-07-01", "2026-07-02"],
+      ["SH-CROSS-2", "退款成功", "ORD-CROSS", 5, "2026-07-03", "2026-07-04"],
+      ["SH-SAME", "退款成功", "ORD-SAME", 10, "2026-07-08", "2026-07-09"],
+    ]),
+    {
+      orderFile: fd("orders-cross-month.xlsx", [
+        ["订单号", "商品总价", "成交时间"],
+        ["ORD-CROSS", 50, "2026-06-30 23:50:00"],
+        ["ORD-SAME", 30, "2026-07-02 10:00:00"],
+      ]),
+    },
+  );
+  ok(
+    "after.cross_month_refund_counts_unique_orders_and_rate",
+    crossMonthAfter.summary.crossMonthRefundOrders === 1
+      && crossMonthAfter.summary.crossMonthComparableOrders === 2
+      && crossMonthAfter.summary.crossMonthRefundRate === 0.5
+      && after.filterAfterSaleRows(crossMonthAfter.rows, "crossMonth").length === 2,
+    JSON.stringify(crossMonthAfter.summary),
+  );
+  const crossMonthSheets = after.buildAfterSaleExportSheets(crossMonthAfter);
+  const crossMonthSheet = crossMonthSheets.find((sheet: any) => sheet.name === "跨月退款");
+  ok(
+    "after.cross_month_refund_has_separate_export_with_months",
+    crossMonthSheet?.data?.length === 3
+      && crossMonthSheet.data[0].includes("成交月份")
+      && crossMonthSheet.data[0].includes("退款月份")
+      && crossMonthSheet.data.slice(1).every((row: any[]) => row.includes("是")),
+    JSON.stringify(crossMonthSheet?.data || []),
+  );
+  const numericDateCrossMonth = after.parseAndAnalyzeAfterSales(
+    fd("after-numeric-date.xlsx", [
+      [
+        "售后单号",
+        "平台售后状态",
+        "平台订单号",
+        "申请退款金额",
+        "成交时间",
+        "申请时间",
+        "确认时间",
+      ],
+      ["SH-NUMERIC", "退款成功", "ORD-NUMERIC", 20, 46203, 46204, 46205],
+    ]),
+  );
+  ok(
+    "after.cross_month_supports_excel_serial_dates",
+    numericDateCrossMonth.summary.crossMonthRefundOrders === 1
+      && numericDateCrossMonth.rows[0].orderMonth === "2026-06"
+      && numericDateCrossMonth.rows[0].refundMonth === "2026-07",
+    JSON.stringify(numericDateCrossMonth.rows[0]),
+  );
+  const completedAtCrossMonth = after.parseAndAnalyzeAfterSales(
+    fd("after-completed-at.xlsx", [
+      [
+        "售后单号",
+        "平台售后状态",
+        "平台订单号",
+        "申请退款金额",
+        "成交时间",
+        "申请时间",
+        "同意退款时间",
+        "退款成功时间",
+      ],
+      [
+        "SH-COMPLETED",
+        "退款成功",
+        "ORD-COMPLETED",
+        20,
+        "2026-06-29",
+        "2026-06-30",
+        "2026-06-30",
+        "2026-07-02",
+      ],
+    ]),
+  );
+  ok(
+    "after.cross_month_prefers_refund_success_time",
+    completedAtCrossMonth.summary.crossMonthRefundOrders === 1
+      && completedAtCrossMonth.rows[0].refundMonth === "2026-07",
+    JSON.stringify(completedAtCrossMonth.rows[0]),
+  );
+  const placeholderDealTime = after.parseAndAnalyzeAfterSales(
+    fd("after-placeholder-deal.xlsx", [
+      [
+        "售后单号",
+        "平台售后状态",
+        "平台订单号",
+        "申请退款金额",
+        "成交时间",
+        "退款成功时间",
+      ],
+      ["SH-PLACEHOLDER", "退款成功", "ORD-PLACEHOLDER", 20, "--", "2026-07-02"],
+    ]),
+    {
+      orderFile: fd("orders-placeholder-deal.xlsx", [
+        ["订单号", "商品总价", "成交时间"],
+        ["ORD-PLACEHOLDER", 50, "2026-06-29"],
+      ]),
+    },
+  );
+  ok(
+    "after.cross_month_uses_matched_order_when_after_sale_date_is_placeholder",
+    placeholderDealTime.summary.crossMonthRefundOrders === 1
+      && placeholderDealTime.rows[0].orderMonth === "2026-06",
+    JSON.stringify(placeholderDealTime.rows[0]),
+  );
+
   
   // refund classification: full vs partial
   {

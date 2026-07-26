@@ -120,6 +120,7 @@ function FileCard({
 const FILTER_BTNS: { key: AfterSaleFilter; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "success", label: "退款成功" },
+  { key: "crossMonth", label: "跨月退款" },
   { key: "partial", label: "部分退" },
   { key: "full", label: "全额退" },
   { key: "beforeShip", label: "发货前" },
@@ -173,6 +174,7 @@ export default function AfterSaleTab({
     const s = result.summary;
     if (k === "all") return s.total;
     if (k === "success") return s.success;
+    if (k === "crossMonth") return s.crossMonthRefundOrders;
     if (k === "revoked") return s.revoked;
     if (k === "failed") return s.failed;
     if (k === "processing") return s.processing;
@@ -343,7 +345,7 @@ export default function AfterSaleTab({
               <h2 className="text-lg font-bold text-slate-800">售后分析</h2>
               <p className="text-sm text-slate-500 mt-1 leading-relaxed max-w-3xl">
                 导入拼多多<strong className="text-slate-700">售后导出</strong>
-                。原因=大项，描述=小项（自动近似合并）；可看发货前/后、规格排行。
+                。原因=大项，描述=小项（自动近似合并）；可看发货前/后、跨月退款、规格排行。
                 对接订单后可算<strong className="text-slate-700">售后率</strong>。
               </p>
             </div>
@@ -472,7 +474,7 @@ export default function AfterSaleTab({
                   小项为空表示大项无补充描述，不是聚类失败。
                 </div>
               ) : null}
-              <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
                 <button
                   type="button"
                   onClick={() => setFilter("success")}
@@ -516,6 +518,27 @@ export default function AfterSaleTab({
                   <div className="text-[11px] text-violet-800">部分退</div>
                   <div className="text-xl font-bold text-violet-950">{s.partialRefund}</div>
                   <div className="text-[11px] text-violet-700/80">差额 ¥{s.partialGapAmount.toFixed(0)}</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilter("crossMonth")}
+                  className={`text-left rounded-xl border p-3 ${
+                    filter === "crossMonth"
+                      ? "border-cyan-400 bg-cyan-50 ring-2 ring-cyan-200"
+                      : "border-cyan-100 bg-cyan-50/50"
+                  }`}
+                  title="成交月份与退款成功/完成月份不同；缺失时依次采用同意/确认时间、申请时间。占比以两个月份都可判断的成功退款订单为分母"
+                >
+                  <div className="text-[11px] text-cyan-800">跨月退款</div>
+                  <div className="text-xl font-bold text-cyan-950">
+                    {s.crossMonthRefundOrders}
+                  </div>
+                  <div className="text-[11px] text-cyan-700/80">
+                    {s.crossMonthRefundRate != null
+                      ? `${(s.crossMonthRefundRate * 100).toFixed(1)}%`
+                      : "占比 —"}
+                    {" · "}可判断 {s.crossMonthComparableOrders}
+                  </div>
                 </button>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <div className="text-[11px] text-slate-500">售后率(单)</div>

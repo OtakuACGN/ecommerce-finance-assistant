@@ -13,7 +13,7 @@ import {
 export type AfterSaleFilter =
   | "all" | "success" | "revoked" | "failed" | "processing"
   | "beforeShip" | "afterShip" | "partial" | "full"
-  | "returnRefund" | "refundOnly" | "resend" | "intercept";
+  | "returnRefund" | "refundOnly" | "resend" | "intercept" | "crossMonth";
 
 export type AfterSaleStage = "before_ship" | "after_ship" | "unknown";
 export type AfterSaleRefundScope = "full" | "partial" | "none" | "unknown";
@@ -41,6 +41,8 @@ export interface AfterSaleRow {
   returnLogisticsStatus: string;
   returnLogisticsTime: string;
   agreeRefundAt: string;
+  /** 平台退款成功/完成时间；跨月判断优先于同意/确认时间 */
+  refundCompletedAt: string;
   agreeRefundBy: string;
   agreeReturnAt: string;
   agreeReturnBy: string;
@@ -56,6 +58,12 @@ export interface AfterSaleRow {
   isRevoked: boolean;
   isFailed: boolean;
   month: string;
+  /** 原订单成交时间及月份；用于判断退款是否跨月 */
+  orderDealAt: string;
+  orderMonth: string;
+  /** 成功退款月份：成功/完成时间 > 同意/确认时间 > 申请时间 */
+  refundMonth: string;
+  isCrossMonthRefund: boolean;
   productName: string;
   specName: string;
   merchantSku: string;
@@ -109,6 +117,12 @@ export interface AfterSaleSummary {
   resend: number;
   fullRefund: number;
   partialRefund: number;
+  /** 跨月成功退款订单数（同一订单只计一次） */
+  crossMonthRefundOrders: number;
+  /** 同时具备成交月和退款月、可参与跨月判断的成功退款订单数 */
+  crossMonthComparableOrders: number;
+  /** 跨月退款订单 / 可参与判断的成功退款订单 */
+  crossMonthRefundRate: number | null;
   intercept: number;
   refundAmountTotal: number;
   tradeAmountTotal: number;
@@ -142,6 +156,7 @@ export interface AfterSaleResult {
 
 function norm(s: unknown): string { return String(s ?? "").trim(); }
 function normOrderId(raw: unknown): string { return norm(raw).replace(/\s+/g, ""); }
+function pad2(n: number): string { return String(n).padStart(2, "0"); }
 function parseNum(raw: unknown): number {
   if (raw == null || raw === "") return 0;
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
@@ -150,15 +165,41 @@ function parseNum(raw: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 function cell(row: any[], idx: number): string { if (idx < 0) return ""; return norm(row[idx]); }
+function dateText(raw: unknown): string {
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return `${raw.getFullYear()}-${pad2(raw.getMonth() + 1)}-${pad2(raw.getDate())}`;
+  }
+  const numeric =
+    typeof raw === "number"
+      ? raw
+      : /^\d{5}(?:\.\d+)?$/.test(norm(raw))
+        ? Number(raw)
+        : NaN;
+  if (Number.isFinite(numeric) && numeric >= 20000 && numeric < 80000) {
+    const utc = Date.UTC(1899, 11, 30) + Math.floor(numeric) * 86400000;
+    const date = new Date(utc);
+    return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+  }
+  return norm(raw);
+}
+function dateCell(row: any[], idx: number): string {
+  if (idx < 0) return "";
+  return dateText(row[idx]);
+}
 function findCol(headers: string[], names: string[]): number {
   const hs = headers.map((h) => String(h || "").trim());
   for (const name of names) { const i = hs.findIndex((h) => h === name); if (i >= 0) return i; }
   for (const name of names) { const i = hs.findIndex((h) => h.includes(name)); if (i >= 0) return i; }
   return -1;
 }
-function monthOf(dt: string): string {
-  const m = String(dt || "").match(/(\d{4})[-\/]?(\d{1,2})/);
-  if (!m) return "";
+function monthOf(dt: unknown): string {
+  const text = dateText(dt);
+  const m = text.match(/(?:^|\D)(\d{4})[-/年.](\d{1,2})(?:\D|$)/);
+  if (!m) {
+    const compact = text.match(/^(\d{4})(\d{2})(?:\d{2})?$/);
+    if (!compact) return "";
+    return `${compact[1]}-${compact[2]}`;
+  }
   return `${m[1]}-${m[2].padStart(2, "0")}`;
 }
 
@@ -288,7 +329,15 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
   const iRetWb = findCol(headers, ["退货快递单号", "退货运单号"]);
   const iRetLog = findCol(headers, ["货物状态", "退货物流状态"]);
   const iRetExp = findCol(headers, ["退货快递"]);
+  const iRefundCompleted = findCol(headers, [
+    "退款成功时间",
+    "退款完成时间",
+    "退款到账时间",
+    "售后完成时间",
+    "平台退款时间",
+  ]);
   const iAgreeRf = findCol(headers, ["确认时间", "同意退款时间"]);
+  const iOrderDeal = findCol(headers, ["订单成交时间", "成交时间", "下单时间", "支付时间"]);
   const iAgreeRfBy = findCol(headers, ["创建人", "同意退款人"]);
   const iIntercept = findCol(headers, ["拦截状态", "快递拦截状态"]);
   const iSku = findCol(headers, ["商品规格", "规格名称", "sku信息", "SKU信息", "规格"]);
@@ -333,7 +382,10 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
       applyReturnQty,
       actualReturnQty,
     });
-    const applyAt = cell(row, iApply);
+    const applyAt = dateCell(row, iApply);
+    const agreeRefundAt = dateCell(row, iAgreeRf);
+    const refundCompletedAt = dateCell(row, iRefundCompleted);
+    const orderDealAt = dateCell(row, iOrderDeal);
     const productName = cell(row, iPName);
     const specName = cell(row, iSku);
     const merchantSku = cell(row, iCode);
@@ -346,7 +398,7 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
       timeoutAt: cell(row, iTimeout), applyAt, reason, description,
       returnWaybill: cell(row, iRetWb),
       returnLogisticsStatus: cell(row, iRetLog) || cell(row, iRetExp),
-      returnLogisticsTime: "", agreeRefundAt: cell(row, iAgreeRf),
+      returnLogisticsTime: "", agreeRefundAt, refundCompletedAt,
       agreeRefundBy: cell(row, iAgreeRfBy), agreeReturnAt: "", agreeReturnBy: "",
       interceptStatus: cell(row, iIntercept), skuInfo: specName,
       orderTag: cell(row, iTag), remark: cell(row, iRemark),
@@ -355,7 +407,12 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
       isSuccess: isAfterSaleSuccess(status, platformStatus),
       isRevoked: isAfterSaleRevoked(status, platformStatus),
       isFailed: isAfterSaleFailed(status, platformStatus),
-      month: monthOf(applyAt), productName, specName, merchantSku,
+      month: monthOf(applyAt),
+      orderDealAt,
+      orderMonth: "",
+      refundMonth: "",
+      isCrossMonthRefund: false,
+      productName, specName, merchantSku,
       orderGoodsTotal: 0, orderReceived: 0, orderQty: 0, orderMatched: false,
       refundQty: applyReturnQty || 0,
       applyReturnQty: applyReturnQty || 0,
@@ -372,19 +429,19 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
       key: "empty", label: "无有效描述", method: "empty" as const, normalized: "",
     };
     const { _rowKey, ...rest } = d;
-    return {
+    return finalizeCrossMonth({
       ...rest,
       descClusterKey: c.key,
       descClusterLabel: c.label,
       descClusterMethod: c.method,
-    };
+    });
   });
 }
 
 export interface OrderBaseRow {
   orderId: string; productId: string; productName: string; specName: string;
   merchantSku: string; goodsTotal: number; received: number; qty: number;
-  afterSaleStatus: string; orderStatus: string;
+  afterSaleStatus: string; orderStatus: string; dealTime: string;
 }
 
 export function parseOrderBaseFile(data: any[][]): OrderBaseRow[] {
@@ -405,6 +462,7 @@ export function parseOrderBaseFile(data: any[][]): OrderBaseRow[] {
   const iQty = findCol(headers, ["商品数量(件)", "商品数量", "数量"]);
   const iAs = findCol(headers, ["售后状态"]);
   const iOst = findCol(headers, ["订单状态"]);
+  const iDeal = findCol(headers, ["订单成交时间", "成交时间", "下单时间", "支付时间"]);
   const out: OrderBaseRow[] = [];
   for (let r = headerIdx + 1; r < data.length; r++) {
     const row = data[r] || [];
@@ -415,7 +473,7 @@ export function parseOrderBaseFile(data: any[][]): OrderBaseRow[] {
       specName: cell(row, iSpec), merchantSku: cell(row, iSku),
       goodsTotal: parseNum(row[iGoods]), received: parseNum(row[iRecv]),
       qty: parseNum(row[iQty]) || 1, afterSaleStatus: cell(row, iAs),
-      orderStatus: cell(row, iOst),
+      orderStatus: cell(row, iOst), dealTime: dateCell(row, iDeal),
     };
     // 保留订单内的 SKU 明细。订单维度汇总在分析阶段单独完成，
     // 否则多 SKU 订单会全部落到第一条规格，导致 SKU 售后率分母失真。
@@ -434,6 +492,7 @@ export function orderBaseFromPddOrders(orders: PddOrder[]): OrderBaseRow[] {
       specName: o.specName || "", merchantSku: o.merchantSku || o.merchantSpu || "",
       goodsTotal: o.goodsTotal || 0, received: o.merchantReceived || 0,
       qty: o.qty || 1, afterSaleStatus: o.afterSale || "", orderStatus: o.status || "",
+      dealTime: o.dealTime || "",
     };
     out.push(piece);
   }
@@ -441,6 +500,24 @@ export function orderBaseFromPddOrders(orders: PddOrder[]): OrderBaseRow[] {
 }
 
 
+
+function finalizeCrossMonth(row: AfterSaleRow): AfterSaleRow {
+  const orderMonth = monthOf(row.orderDealAt);
+  const refundMonth =
+    monthOf(row.refundCompletedAt)
+    || monthOf(row.agreeRefundAt)
+    || monthOf(row.applyAt);
+  return {
+    ...row,
+    orderMonth,
+    refundMonth,
+    isCrossMonthRefund:
+      row.isSuccess
+      && !!orderMonth
+      && !!refundMonth
+      && orderMonth !== refundMonth,
+  };
+}
 
 function enrichWithOrders(rows: AfterSaleRow[], orders: OrderBaseRow[]): AfterSaleRow[] {
   const grouped = new Map<string, OrderBaseRow[]>();
@@ -479,7 +556,7 @@ function enrichWithOrders(rows: AfterSaleRow[], orders: OrderBaseRow[]): AfterSa
         applyReturnQty: r.applyReturnQty,
         actualReturnQty: r.actualReturnQty,
       });
-      return { ...r, scope };
+      return finalizeCrossMonth({ ...r, scope });
     }
     const stage =
       r.stage !== "unknown" ? r.stage : detectAfterSaleStage(o.orderStatus, r.shipWaybill);
@@ -492,7 +569,7 @@ function enrichWithOrders(rows: AfterSaleRow[], orders: OrderBaseRow[]): AfterSa
       applyReturnQty: r.applyReturnQty,
       actualReturnQty: r.actualReturnQty,
     });
-    return {
+    return finalizeCrossMonth({
       ...r,
       productName: r.productName || o.productName,
       specName: r.specName || o.specName,
@@ -503,11 +580,12 @@ function enrichWithOrders(rows: AfterSaleRow[], orders: OrderBaseRow[]): AfterSa
       orderReceived: o.received,
       orderQty: o.qty,
       orderMatched: true,
+      orderDealAt: monthOf(r.orderDealAt) ? r.orderDealAt : o.dealTime,
       stage,
       scope,
       // 有订单价时，差额对照用订单价
       tradeAmount: tradeAmount > 0 ? tradeAmount : o.goodsTotal || r.tradeAmount,
-    };
+    });
   });
 }
 
@@ -618,6 +696,16 @@ export function analyzeAfterSales(
   const orderBaseCount = new Set(orders.map((o) => o.orderId).filter(Boolean)).size;
   const orderBaseGmv = orders.reduce((s, o) => s + (o.goodsTotal || 0), 0);
   const successOrderIds = new Set(successRows.map((r) => r.orderId).filter(Boolean));
+  const crossMonthComparableOrderIds = new Set(
+    successRows
+      .filter((r) => r.orderId && r.orderMonth && r.refundMonth)
+      .map((r) => r.orderId),
+  );
+  const crossMonthRefundOrderIds = new Set(
+    successRows
+      .filter((r) => r.orderId && r.isCrossMonthRefund)
+      .map((r) => r.orderId),
+  );
   const partialRows = successRows.filter((r) => r.scope === "partial");
   const partialGapAmount = partialRows.reduce((s, r) => {
     const base = r.tradeAmount > 0 ? r.tradeAmount : r.orderGoodsTotal || 0;
@@ -647,6 +735,12 @@ export function analyzeAfterSales(
     resend: rows.filter((r) => /补寄/.test(r.refundType)).length,
     fullRefund: successRows.filter((r) => r.scope === "full").length,
     partialRefund: partialRows.length,
+    crossMonthRefundOrders: crossMonthRefundOrderIds.size,
+    crossMonthComparableOrders: crossMonthComparableOrderIds.size,
+    crossMonthRefundRate:
+      crossMonthComparableOrderIds.size > 0
+        ? crossMonthRefundOrderIds.size / crossMonthComparableOrderIds.size
+        : null,
     intercept: rows.filter((r) => { const x = norm(r.interceptStatus); return !!x && !/未揽件|无|—|-/.test(x); }).length,
     refundAmountTotal: Math.round(refundAmountTotal * 100) / 100,
     tradeAmountTotal: Math.round(tradeAmountTotal * 100) / 100,
@@ -741,13 +835,16 @@ export function filterAfterSaleRows(rows: AfterSaleRow[], filter: AfterSaleFilte
   if (filter === "intercept") return rows.filter((r) => {
     const x = norm(r.interceptStatus); return !!x && !/未揽件|无|—|-/.test(x);
   });
+  if (filter === "crossMonth") return rows.filter((r) => r.isCrossMonthRefund);
   return rows;
 }
 
 const DETAIL_HEADERS = [
   "售后单号", "订单号", "平台售后状态", "售后单状态", "售后类型", "退款范围", "发货阶段",
   "申请退款金额", "交易/对照金额", "售后原因(大项)", "描述聚类(小项)", "原始售后描述", "聚类方式",
-  "商品ID", "商品名称", "规格", "规格编码", "申请时间", "确认时间", "创建人",
+  "商品ID", "商品名称", "规格", "规格编码", "申请时间", "同意/确认时间",
+  "退款成功/完成时间",
+  "成交月份", "退款月份", "是否跨月", "创建人",
   "发货运单号", "退货运单号", "拦截状态", "店铺", "是否匹配订单", "备注",
 ] as const;
 
@@ -777,7 +874,9 @@ export function afterSaleRowToArray(r: AfterSaleRow): (string | number)[] {
     Math.round(r.refundAmount * 100) / 100, Math.round(r.tradeAmount * 100) / 100,
     r.reason, r.descClusterLabel, r.description, methodLabel(r.descClusterMethod),
     r.productId, r.productName, r.skuInfo || r.specName, r.merchantSku,
-    r.applyAt, r.agreeRefundAt, r.agreeRefundBy, r.shipWaybill, r.returnWaybill,
+    r.applyAt, r.agreeRefundAt, r.refundCompletedAt, r.orderMonth, r.refundMonth,
+    r.isCrossMonthRefund ? "是" : "否",
+    r.agreeRefundBy, r.shipWaybill, r.returnWaybill,
     r.interceptStatus, r.shopName, r.orderMatched ? "是" : "否", r.remark,
   ];
 }
@@ -810,6 +909,9 @@ export function buildAfterSaleExportSheets(result: AfterSaleResult): Array<{ nam
     ["退货退款", s.returnRefund],
     ["全额退", s.fullRefund],
     ["部分退", s.partialRefund],
+    ["跨月退款订单", s.crossMonthRefundOrders],
+    ["可判断跨月订单", s.crossMonthComparableOrders],
+    ["跨月退款占比", pct(s.crossMonthRefundRate)],
     ["成功退款金额", money(s.successRefundAmount)],
     ["描述原始种类", s.descRawUnique],
     ["描述合并后种类", s.descClusterCount],
@@ -837,6 +939,7 @@ export function buildAfterSaleExportSheets(result: AfterSaleResult): Array<{ nam
     { name: "成功明细", data: afterSalesToTable(result.rows, "success") },
     { name: "发货前", data: afterSalesToTable(result.rows, "beforeShip") },
     { name: "发货后", data: afterSalesToTable(result.rows, "afterShip") },
+    { name: "跨月退款", data: afterSalesToTable(result.rows, "crossMonth") },
     { name: "全部明细", data: afterSalesToTable(result.rows, "all") },
   ];
 }
