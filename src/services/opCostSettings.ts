@@ -66,6 +66,11 @@ export function normalizeCostSettings(parsed: Partial<CostSettings> | null | und
       parsed.adAllocateMode === "by_gmv"
         ? parsed.adAllocateMode
         : "by_product",
+    revenueBasisMode:
+      parsed.revenueBasisMode === "ledger" ||
+      parsed.revenueBasisMode === "orders"
+        ? parsed.revenueBasisMode
+        : "auto",
     matchBySpecWhenNoCode: parsed.matchBySpecWhenNoCode !== false,
     anomalyHighRefundRate: Math.min(
       1,

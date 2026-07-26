@@ -1,5 +1,5 @@
 /**
- * DianCaiTong 1.2.9 smoke suite
+ * DianCaiTong 1.3.0 smoke suite
  */
 import * as path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -156,6 +156,7 @@ async function main() {
   }
 
 const pdd = await load("src/services/pddBusiness.ts");
+  const operatingWorkspace = await load("src/services/operatingWorkspace.ts");
   const orders = [{
     orderId: "A1", productName: "item", status: "已发货", afterSale: "", qty: 1,
     goodsTotal: 50, buyerPaid: 50, merchantReceived: 48, platformDiscount: 0, shopDiscount: 0,
@@ -167,6 +168,64 @@ const pdd = await load("src/services/pddBusiness.ts");
   ok("productMaster.rows", rows.length >= 1, String(rows.length));
   const imp = pdd.productMasterImportTable(rows);
   ok("productMaster.table", Array.isArray(imp) && imp.length >= 2);
+
+  {
+    const snapshot = operatingWorkspace.createOperatingWorkspace({
+      appVersion: "test",
+      shopLabel: "测试店",
+      productImportMode: "merge",
+      sources: [{ kind: "pdd_orders", name: "orders.csv", rows: 1, shop: "测试店" }],
+      costSettings: { ...pdd.DEFAULT_COST_SETTINGS, brandPointPct: 5 },
+      orders,
+      billLines: [],
+      products: rows,
+      ads: [],
+      adProducts: [],
+      skuMappings: [
+        {
+          platformName: "人工规则",
+          internalCode: "MANUAL-001",
+          price: 12.5,
+        },
+      ],
+      exportedAt: "2026-07-26T00:00:00.000Z",
+    });
+    const restored = operatingWorkspace.parseOperatingWorkspace(
+      JSON.parse(JSON.stringify(snapshot)),
+    );
+    ok(
+      "workspace.roundtrip",
+      restored.data.orders.length === 1 &&
+        restored.data.products.length === rows.length &&
+        restored.data.skuMappings.length === 1 &&
+        restored.data.skuMappings[0].internalCode === "MANUAL-001" &&
+        restored.productImportMode === "merge" &&
+        restored.costSettings.brandPointPct === 5,
+      operatingWorkspace.operatingWorkspaceSummary(restored),
+    );
+    ok(
+      "workspace.summary",
+      operatingWorkspace.operatingWorkspaceSummary(restored).includes("订单 1 单"),
+      operatingWorkspace.operatingWorkspaceSummary(restored),
+    );
+    let rejectedVersion = false;
+    try {
+      operatingWorkspace.parseOperatingWorkspace({ ...snapshot, version: 99 });
+    } catch {
+      rejectedVersion = true;
+    }
+    ok("workspace.rejects_future_version", rejectedVersion);
+    let rejectedRows = false;
+    try {
+      operatingWorkspace.parseOperatingWorkspace({
+        ...snapshot,
+        data: { ...snapshot.data, orders: ["bad"] },
+      });
+    } catch {
+      rejectedRows = true;
+    }
+    ok("workspace.rejects_invalid_rows", rejectedRows);
+  }
 
   // Parser/import guardrails: avoid silent duplication and false cost matches.
   {
@@ -204,6 +263,126 @@ const pdd = await load("src/services/pddBusiness.ts");
       techRefund.totals.refund === 0 &&
         techRefund.totals.techFeeRefund === 2,
       JSON.stringify(techRefund.totals),
+    );
+
+    const duplicateOrderAcrossShops = pdd.buildOperatingReport(
+      [
+        {
+          orderId: "SAME-ORDER",
+          productName: "店A商品",
+          status: "已收货",
+          afterSale: "",
+          qty: 1,
+          goodsTotal: 100,
+          buyerPaid: 100,
+          merchantReceived: 100,
+          platformDiscount: 0,
+          shopDiscount: 0,
+          productId: "A-P1",
+          specName: "标准",
+          merchantSku: "A-SKU",
+          merchantSpu: "A-SPU",
+          dealTime: "2026-07-01",
+          shipTime: "",
+          confirmTime: "2026-07-02",
+          postage: 0,
+          expressNo: "",
+          expressCompany: "",
+          shopName: "店A",
+        },
+        {
+          orderId: "SAME-ORDER",
+          productName: "店B商品",
+          status: "已收货",
+          afterSale: "",
+          qty: 1,
+          goodsTotal: 200,
+          buyerPaid: 200,
+          merchantReceived: 200,
+          platformDiscount: 0,
+          shopDiscount: 0,
+          productId: "B-P1",
+          specName: "标准",
+          merchantSku: "B-SKU",
+          merchantSpu: "B-SPU",
+          dealTime: "2026-07-01",
+          shipTime: "",
+          confirmTime: "2026-07-02",
+          postage: 0,
+          expressNo: "",
+          expressCompany: "",
+          shopName: "店B",
+        },
+      ],
+      [
+        {
+          orderId: "SAME-ORDER",
+          time: "2026-07-02",
+          income: 100,
+          expense: 0,
+          billType: "交易收入",
+          remark: "",
+          bizDesc: "",
+          shopName: "店A",
+        },
+        {
+          orderId: "SAME-ORDER",
+          time: "2026-07-02",
+          income: 0,
+          expense: 10,
+          billType: "技术服务费",
+          remark: "",
+          bizDesc: "",
+          shopName: "店A",
+        },
+        {
+          orderId: "SAME-ORDER",
+          time: "2026-07-02",
+          income: 200,
+          expense: 0,
+          billType: "交易收入",
+          remark: "",
+          bizDesc: "",
+          shopName: "店B",
+        },
+        {
+          orderId: "SAME-ORDER",
+          time: "2026-07-02",
+          income: 0,
+          expense: 20,
+          billType: "技术服务费",
+          remark: "",
+          bizDesc: "",
+          shopName: "店B",
+        },
+      ],
+      [],
+      [],
+      { ...pdd.DEFAULT_COST_SETTINGS, adAllocateMode: "none" },
+      [],
+    );
+    const shopAProfit = duplicateOrderAcrossShops.orderProfits.find(
+      (row: any) => row.shopName === "店A",
+    );
+    const shopBProfit = duplicateOrderAcrossShops.orderProfits.find(
+      (row: any) => row.shopName === "店B",
+    );
+    ok(
+      "bill.duplicate_order_id_isolated_by_shop",
+      shopAProfit?.billIncome === 100 &&
+        shopAProfit?.techFee === 10 &&
+        shopBProfit?.billIncome === 200 &&
+        shopBProfit?.techFee === 20,
+      JSON.stringify({
+        shopA: shopAProfit && {
+          billIncome: shopAProfit.billIncome,
+          techFee: shopAProfit.techFee,
+        },
+        shopB: shopBProfit && {
+          billIncome: shopBProfit.billIncome,
+          techFee: shopBProfit.techFee,
+        },
+      }),
     );
 
     const ambiguousProducts = [
@@ -304,11 +483,80 @@ const pdd = await load("src/services/pddBusiness.ts");
         JSON.stringify(mergedLines),
       );
     }
+
+    const mergeAdDays = pdd.replaceImportedAdDailySource;
+    ok(
+      "import.ad_daily_replace_helper_exists",
+      typeof mergeAdDays === "function",
+      typeof mergeAdDays,
+    );
+    if (typeof mergeAdDays === "function") {
+      const day = (date: string, spend: number) => ({
+        date,
+        spend,
+        gmv: spend * 4,
+        netGmv: spend * 3,
+        settledGmv: spend * 2,
+        orders: 1,
+        roi: 4,
+        netRoi: 3,
+        settledRoi: 2,
+        impressions: 100,
+        clicks: 10,
+      });
+      const first = mergeAdDays([], [day("2026-06-01", 10)], "店A", "广告上旬.xlsx");
+      const withSecond = mergeAdDays(
+        first,
+        [day("2026-06-01", 99), day("2026-06-16", 20)],
+        "店A",
+        "广告下旬.xlsx",
+      );
+      ok(
+        "import.overlapping_ad_dates_use_latest_file",
+        withSecond.length === 2 &&
+          withSecond.find((row: any) => row.date === "2026-06-01")?.spend === 99,
+        JSON.stringify(withSecond),
+      );
+      const reimported = mergeAdDays(withSecond, [day("2026-06-01", 15)], "店A", "广告上旬.xlsx");
+      ok(
+        "import.same_shop_ad_files_coexist_and_reimport_replaces",
+        reimported.length === 2 &&
+          reimported.reduce((sum: number, row: any) => sum + row.spend, 0) === 35 &&
+          reimported.filter((row: any) => row.sourceName === "广告上旬.xlsx").length === 1,
+        JSON.stringify(reimported),
+      );
+    }
   }
 
   // Generic module guardrails.
   {
     const logic = await load("src/services/businessLogic.ts");
+    const defaultRebate = logic.calculateRebate(
+      80,
+      logic.DEFAULT_REBATE_TIERS || [],
+    );
+    ok(
+      "rebate.default_tiers_progressive",
+      Math.abs(defaultRebate.totalRebate - 1.9) < 0.0001,
+      JSON.stringify(defaultRebate),
+    );
+    const legacyReconcile = logic.reconcilePayments(
+      [
+        ["订单号", "订单金额"],
+        [123456789, 100],
+      ],
+      [
+        ["订单号", "收款金额"],
+        [123456789, 100],
+      ],
+    );
+    ok(
+      "reconcile.legacy_helper_does_not_treat_numeric_order_id_as_amount",
+      legacyReconcile[1]?.[2] === "已核销" &&
+        legacyReconcile[1]?.[0] === 100 &&
+        legacyReconcile[1]?.[1] === 100,
+      JSON.stringify(legacyReconcile),
+    );
     const loss = logic.calculateRefundLossWithMatching(
       [{ orderId: "R1", platform: "拼多多", refundAmount: 100, refundDate: "2026-06-01" }],
       [
@@ -511,6 +759,21 @@ const pdd = await load("src/services/pddBusiness.ts");
         replacedBillRecords[0].totalAmount === 100,
       JSON.stringify(replacedBillRecords),
     );
+    const crossMonthRecords = pdd.billRecordsFromPdd?.(
+      { name: "跨月账务.csv", path: "", headers: [], data: [] },
+      [
+        { orderId: "MAY-1", time: "2026-05-31", income: 10, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+        { orderId: "JUNE-1", time: "2026-06-01", income: 20, expense: 0, billType: "交易收入", remark: "", bizDesc: "" },
+      ],
+    );
+    ok(
+      "bill.cross_month_file_splits_monthly_records",
+      Array.isArray(crossMonthRecords) &&
+        crossMonthRecords.length === 2 &&
+        crossMonthRecords[0].date.startsWith("2026-05") &&
+        crossMonthRecords[1].date.startsWith("2026-06"),
+      JSON.stringify(crossMonthRecords),
+    );
 
     const now = new Date();
     const previousYearSameMonth =
@@ -584,10 +847,66 @@ const pdd = await load("src/services/pddBusiness.ts");
       periodSettings,
       [],
     );
+    const incompleteLedger = pdd.buildOperatingReport(
+      periodOrders,
+      [
+        {
+          orderId: "M1",
+          time: "2026-06-01",
+          income: 10,
+          expense: 0,
+          billType: "交易收入",
+          remark: "",
+          bizDesc: "",
+        },
+      ],
+      periodProducts,
+      [],
+      periodSettings,
+      [],
+    );
+    ok(
+      "rules.incomplete_ledger_falls_back_to_orders",
+      incompleteLedger.summary.confirmedRevenue === 200 &&
+        incompleteLedger.summary.revenueBasisUsed === "orders" &&
+        incompleteLedger.summary.billCoverageWarning,
+      JSON.stringify({
+        confirmedRevenue: incompleteLedger.summary.confirmedRevenue,
+        revenueBasisUsed: incompleteLedger.summary.revenueBasisUsed,
+        warning: incompleteLedger.summary.billCoverageWarning,
+      }),
+    );
     ok("rules.calendar_revenue_all_bill_orders", Math.abs(period.summary.confirmedRevenue - 120) < 0.01, String(period.summary.confirmedRevenue));
     ok("rules.calendar_all_platform_fees", Math.abs(period.summary.estimatedProfitAfterAd - 112) < 0.01, String(period.summary.estimatedProfitAfterAd));
     ok("rules.before_shipping_profit", Math.abs(period.summary.profitAfterAdBeforeShipping - 115) < 0.01, String(period.summary.profitAfterAdBeforeShipping));
     ok("rules.margin_uses_confirmed_revenue", Math.abs(period.summary.profitMargin - (112 / 120)) < 0.0001, String(period.summary.profitMargin));
+    const decimalOrders = Array.from({ length: 10 }, (_, index) => ({
+      ...periodOrders[0],
+      orderId: `DEC-${index}`,
+      goodsTotal: 0.1,
+      merchantReceived: 0.1,
+      buyerPaid: 0.1,
+    }));
+    const decimalReport = pdd.buildOperatingReport(
+      decimalOrders,
+      [],
+      [],
+      [],
+      {
+        ...periodSettings,
+        firstWeightFee: 0,
+        additionalWeightFee: 0,
+        defaultPackCost: 0,
+      },
+      [],
+    );
+    ok(
+      "money.decimal_sums_are_cent_exact",
+      decimalReport.summary.confirmedRevenue === 1 &&
+        decimalReport.summary.goodsTotal === 1 &&
+        decimalReport.summary.estimatedProfitAfterAd === 1,
+      JSON.stringify(decimalReport.summary),
+    );
   }
 
   // ad by_product: product-level spend allocated within same productId only

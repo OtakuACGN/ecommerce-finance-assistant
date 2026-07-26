@@ -22,11 +22,18 @@ export default function OperatingDashboard({
 
   return (
     <>
-              {(opReport.summary.adMatchWarning ||
+              {(opReport.summary.billCoverageWarning ||
+                opReport.summary.adMatchWarning ||
                 (opReport.summary.cancelledOrderCount || 0) > 0 ||
                 (opReport.summary.unknownRefundCount || 0) > 0 ||
                 (opReport.summary.techFee || 0) - (opReport.summary.techFeeAttributed || 0) > 1) && (
                 <div className="space-y-2 mb-4">
+                  {opReport.summary.billCoverageWarning ? (
+                    <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 leading-relaxed">
+                      <span className="font-semibold">账务完整性告警：</span>
+                      {opReport.summary.billCoverageWarning}
+                    </div>
+                  ) : null}
                   {opReport.summary.adMatchWarning ? (
                     <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 leading-relaxed">
                       <span className="font-semibold">广告匹配告警：</span>
@@ -89,7 +96,7 @@ export default function OperatingDashboard({
                 </div>
                 <div className="h-2 rounded-full bg-white/80 border border-slate-200/80 overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${
+                    className={`h-full rounded-full transition-[width] ${
                       matchTone === "emerald"
                         ? "bg-emerald-500"
                         : matchTone === "sky"

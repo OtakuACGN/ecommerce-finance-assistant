@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx"
+type XlsxModule = typeof import("xlsx")
 import { getBaseName, readLocalFile, writeLocalFile } from "./desktop"
 
 export interface FileData {
@@ -86,7 +86,10 @@ function scoreSheetHeaders(headers: string[], sheetName: string): number {
   return score
 }
 
-function pickBestSheet(workbook: XLSX.WorkBook): { sheetName: string; rows: any[][] } {
+function pickBestSheet(
+  XLSX: XlsxModule,
+  workbook: import("xlsx").WorkBook,
+): { sheetName: string; rows: any[][] } {
   const names = workbook.SheetNames || []
   if (!names.length) {
     return { sheetName: "", rows: [] }
@@ -126,7 +129,8 @@ function isCSV(filePath: string): boolean {
   return /\.(csv|CSV)$/.test(filePath)
 }
 
-export async function processFile(filePath: string): Promise<FileData | null> {
+export async function processFile(filePath: string): Promise<FileData | null> {
+  const XLSX = await import("xlsx")
   try {
     const result = await readLocalFile(filePath)
     if (!result.success || !result.buffer) {
@@ -138,11 +142,11 @@ export async function processFile(filePath: string): Promise<FileData | null> {
     if (isCSV(filePath)) {
       const content = detectAndDecodeBuffer(result.buffer)
       const workbook = XLSX.read(content, { type: "string" })
-      data = pickBestSheet(workbook).rows
+      data = pickBestSheet(XLSX, workbook).rows
     } else {
       // Excel: 自动挑选明细表（如快递账单「明细」优先于「汇总」）
       const workbook = XLSX.read(result.buffer, { type: "array" })
-      data = pickBestSheet(workbook).rows
+      data = pickBestSheet(XLSX, workbook).rows
     }
 
     if (!data || data.length === 0) {
@@ -184,7 +188,8 @@ export function xlsxOutputToArrayBuffer(
 }
 
 /** 将二维表写入 xlsx（单表） */
-export async function exportToExcel(data: any[][], filePath: string): Promise<void> {
+export async function exportToExcel(data: any[][], filePath: string): Promise<void> {
+  const XLSX = await import("xlsx")
   if (!data || data.length === 0) {
     throw new Error("导出数据为空")
   }
@@ -211,7 +216,8 @@ export async function exportWorkbook(
   sheets: Array<WorkbookSheet>,
   filePath: string,
 ): Promise<void> {
-  if (!sheets.length) throw new Error("没有可导出的工作表")
+  if (!sheets.length) throw new Error("没有可导出的工作表")
+  const XLSX = await import("xlsx")
   const workbook = XLSX.utils.book_new()
   for (const s of sheets) {
     const rows = s.data || []

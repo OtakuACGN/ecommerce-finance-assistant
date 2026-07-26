@@ -21,6 +21,33 @@
   box-sizing: border-box;
 }
 
+:where(button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+:where(button, summary) {
+  touch-action: manipulation;
+}
+
+.skip-link {
+  position: fixed;
+  left: 12px;
+  top: 8px;
+  z-index: 100;
+  transform: translateY(-160%);
+  border-radius: 10px;
+  background: #0f172a;
+  color: white;
+  padding: 8px 12px;
+  font-size: 14px;
+  transition: transform 0.12s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 html,
 body,
 #root {
@@ -88,7 +115,7 @@ body {
     box-shadow: 0 8px 18px rgba(15, 118, 110, 0.22);
   }
   .tab-pill {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all border border-transparent whitespace-nowrap shrink-0;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium border border-transparent whitespace-nowrap shrink-0;
   }
   .tab-pill-active {
     @apply text-white shadow;
@@ -141,12 +168,40 @@ body {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .app-nav-track {
   scrollbar-width: none;
 }
 .app-nav-track::-webkit-scrollbar {
   width: 0;
   height: 0;
+}
+
+/* 低于常规桌面宽度时把功能导航放到独立一行，确保 10 个入口都可见。 */
+@media (max-width: 1320px) {
+  .app-header {
+    flex-wrap: wrap;
+    row-gap: 0.35rem;
+  }
+  .app-nav-track {
+    order: 2;
+    flex-basis: 100%;
+    padding: 0.1rem 0 0.15rem;
+  }
+  .tab-pill {
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
+  }
 }
 
 .metric-grid > div,

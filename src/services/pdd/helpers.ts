@@ -13,6 +13,28 @@ export function toNum(v: any): number {
   return isNaN(n) ? 0 : n;
 }
 
+/** 经营报表统一以“分”为最小展示精度，避免大量小数直接相加产生浮点尾差。 */
+export function roundMoney(value: number): number {
+  const amount = Number.isFinite(value) ? value : 0;
+  const adjusted =
+    amount + Math.sign(amount || 1) * Number.EPSILON;
+  return Math.round(adjusted * 100) / 100;
+}
+
+export function addMoney(left: number, right: number): number {
+  return roundMoney(left + right);
+}
+
+export function sumMoney(values: Iterable<number>): number {
+  let cents = 0;
+  for (const value of values) {
+    cents += Math.round(
+      (Number(value) + Math.sign(Number(value) || 1) * Number.EPSILON) * 100,
+    );
+  }
+  return cents / 100;
+}
+
 export function cell(row: any[], idx: number): string {
   if (idx < 0) return "";
   return String(row[idx] ?? "").trim();

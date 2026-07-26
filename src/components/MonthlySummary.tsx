@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { exportToExcel } from "../utils/excel";
 import { saveDataFile } from "../utils/desktop";
 import type { BillRecord } from "../services/businessLogic";
+import RebateCalculator from "./RebateCalculator";
 
 interface PlatformSummary {
   platform: string;
@@ -300,9 +301,12 @@ export default function MonthlySummary({
                 汇总月份
               </label>
               <select
+                aria-label="汇总年份"
+                name="summary-year"
+                autoComplete="off"
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(Number(e.target.value))}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus-visible:border-blue-500"
               >
                 {years.map((y) => (
                   <option key={y} value={y}>
@@ -311,9 +315,12 @@ export default function MonthlySummary({
                 ))}
               </select>
               <select
+                aria-label="汇总月份"
+                name="summary-month"
+                autoComplete="off"
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(Number(e.target.value))}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus-visible:border-blue-500"
               >
                 {months.map((m) => (
                   <option key={m} value={m}>
@@ -328,6 +335,9 @@ export default function MonthlySummary({
                 对比月份
               </label>
               <select
+                aria-label="对比月份"
+                name="comparison-month"
+                autoComplete="off"
                 value={
                   comparisonMonth
                     ? `${comparisonMonth.year}-${String(comparisonMonth.month).padStart(2, "0")}`
@@ -341,7 +351,7 @@ export default function MonthlySummary({
                   const [y, m] = e.target.value.split("-").map(Number);
                   setComparisonMonth({ year: y, month: m });
                 }}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus-visible:border-blue-500"
               >
                 <option value="">不对比</option>
                 {comparisonOptions.map((option) => {
@@ -376,6 +386,11 @@ export default function MonthlySummary({
             )}
           </div>
         </div>
+
+        <RebateCalculator
+          defaultGmv={currentTotal.gmv}
+          desktopReady={desktopReady}
+        />
 
         {/* 总览卡片 */}
         {currentSummary.length > 0 && (

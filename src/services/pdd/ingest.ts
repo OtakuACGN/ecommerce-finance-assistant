@@ -18,6 +18,7 @@ import {
   parsePddBillLines,
   parseProductMaster,
   billRecordFromPdd,
+  billRecordsFromPdd,
 } from "./parse";
 import { parseAdDaily, parseAdProduct } from "./ads";
 import { productsToSkuMappings } from "./productMaster";
@@ -30,6 +31,7 @@ export function ingestForOperating(fileData: FileData): {
   adDays: AdDay[];
   adProducts: AdProduct[];
   billRecord?: BillRecord;
+  billRecords?: BillRecord[];
   skuMappings?: SKUMapping[];
   normalized: FileData;
 } {
@@ -40,6 +42,7 @@ export function ingestForOperating(fileData: FileData): {
   }
   if (kind === "pdd_bill") {
     const billLines = parsePddBillLines(normalized);
+    const billRecords = billRecordsFromPdd(normalized, billLines);
     return {
       kind,
       orders: [],
@@ -48,6 +51,7 @@ export function ingestForOperating(fileData: FileData): {
       adDays: [],
       adProducts: [],
       billRecord: billRecordFromPdd(normalized, billLines),
+      billRecords,
       normalized,
     };
   }

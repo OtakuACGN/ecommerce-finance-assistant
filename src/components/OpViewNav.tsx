@@ -101,8 +101,8 @@ export default function OpViewNav({
         {groups.map((g) => {
           const active = g.id === groupId;
           const cls = active
-            ? "px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-150 bg-slate-900 text-white border-slate-900 shadow-sm"
-            : "px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-150 bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50";
+            ? "px-3 py-1.5 rounded-full text-xs font-medium border transition-[background-color,border-color,color,box-shadow,transform] duration-150 bg-slate-900 text-white border-slate-900 shadow-sm"
+            : "px-3 py-1.5 rounded-full text-xs font-medium border transition-[background-color,border-color,color,box-shadow,transform] duration-150 bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50";
           return (
             <button
               key={g.id}
@@ -137,9 +137,9 @@ export default function OpViewNav({
             const dangerActive = isActive && (it.danger || it.key === "anomalies");
             const cls = isActive
               ? dangerActive
-                ? "shrink-0 px-3 py-1.5 rounded-lg text-xs border transition-all duration-150 bg-rose-600 text-white border-rose-600 shadow-sm"
-                : "shrink-0 px-3 py-1.5 rounded-lg text-xs border transition-all duration-150 bg-blue-600 text-white border-blue-600 shadow-sm"
-              : "shrink-0 px-3 py-1.5 rounded-lg text-xs border transition-all duration-150 bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300";
+                ? "shrink-0 px-3 py-1.5 rounded-lg text-xs border transition-[background-color,border-color,color,box-shadow,transform] duration-150 bg-rose-600 text-white border-rose-600 shadow-sm"
+                : "shrink-0 px-3 py-1.5 rounded-lg text-xs border transition-[background-color,border-color,color,box-shadow,transform] duration-150 bg-blue-600 text-white border-blue-600 shadow-sm"
+              : "shrink-0 px-3 py-1.5 rounded-lg text-xs border transition-[background-color,border-color,color,box-shadow,transform] duration-150 bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300";
             const badgeCls = isActive ? "ml-1 tabular-nums text-white/90" : "ml-1 tabular-nums text-slate-400";
             return (
               <button

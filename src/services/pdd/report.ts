@@ -30,7 +30,8 @@ import {
   matchProduct,
   buildProductIndexes,
 } from "./logistics";
-import { aggregatePddBill } from "./parse";
+import { aggregatePddBill, billOrderKey } from "./parse";
+import { addMoney, roundMoney, sumMoney } from "./helpers";
 
 export function buildOperatingReport(
   orders: PddOrder[],
@@ -41,6 +42,21 @@ export function buildOperatingReport(
   adProducts: AdProduct[] = [],
 ): OperatingReport {
   const { byOrder, byType, totals } = aggregatePddBill(billLines);
+  const namedOrderShops = new Set(
+    orders
+      .map((order) => normalizeShopName(order.shopName))
+      .filter((shop) => shop !== "默认店铺"),
+  );
+  const allowUnscopedBillFallback = namedOrderShops.size <= 1;
+  const billForOrder = (order: PddOrder) => {
+    const scopedKey = billOrderKey(order.orderId, order.shopName);
+    const scoped = byOrder.get(scopedKey);
+    if (scoped) return scoped;
+    if (allowUnscopedBillFallback && scopedKey !== order.orderId) {
+      return byOrder.get(order.orderId);
+    }
+    return undefined;
+  };
   const indexes = buildProductIndexes(products);
   const unmatchedMap = new Map<
     string,
@@ -55,27 +71,27 @@ export function buildOperatingReport(
       sampleOrderIds: string[];
     }
   >();
-  const adSpendDaily = adDays.reduce((s, d) => s + d.spend, 0);
-  const adSpendProduct = adProducts.reduce((s, a) => s + (a.spend || 0), 0);
+  const adSpendDaily = sumMoney(adDays.map((d) => d.spend));
+  const adSpendProduct = sumMoney(adProducts.map((a) => a.spend || 0));
   // 有商品推广汇总时优先用商品真实花费（避免与分天重复相加）
   const adSpend = adSpendProduct > 0 ? adSpendProduct : adSpendDaily;
   const adGmv =
     adSpendProduct > 0
-      ? adProducts.reduce((s, a) => s + (a.gmv || 0), 0)
-      : adDays.reduce((s, d) => s + d.gmv, 0);
+      ? sumMoney(adProducts.map((a) => a.gmv || 0))
+      : sumMoney(adDays.map((d) => d.gmv));
   const adNetGmv =
     adSpendProduct > 0
-      ? adProducts.reduce((s, a) => s + (a.netGmv || 0), 0)
-      : adDays.reduce((s, d) => s + (d.netGmv || 0), 0);
+      ? sumMoney(adProducts.map((a) => a.netGmv || 0))
+      : sumMoney(adDays.map((d) => d.netGmv || 0));
   const adSettledGmv =
     adSpendProduct > 0
-      ? adProducts.reduce((s, a) => s + (a.settledGmv || 0), 0)
-      : adDays.reduce((s, d) => s + (d.settledGmv || 0), 0);
+      ? sumMoney(adProducts.map((a) => a.settledGmv || 0))
+      : sumMoney(adDays.map((d) => d.settledGmv || 0));
   const adByProductId = new Map<string, number>();
   for (const a of adProducts) {
     const id = String(a.productId || "").trim().replace(/\.0$/, "");
     if (!id) continue; // 无商品ID不匹配（禁止品名兜底）
-    adByProductId.set(id, (adByProductId.get(id) || 0) + (a.spend || 0));
+    adByProductId.set(id, addMoney(adByProductId.get(id) || 0, a.spend || 0));
   }
   const normProductId = (raw: string) => String(raw || "").trim().replace(/\.0$/, "");
   /** 仅商品ID精确匹配推广花费（排行/挂表用） */
@@ -89,11 +105,11 @@ export function buildOperatingReport(
   const adSpendByShop = new Map<string, number>();
   for (const d of adDays) {
     const shop = normalizeShopName(d.shopName);
-    adSpendByShop.set(shop, (adSpendByShop.get(shop) || 0) + d.spend);
+    adSpendByShop.set(shop, addMoney(adSpendByShop.get(shop) || 0, d.spend));
   }
   // 先比对商家实收 vs 账务退款，识别全额/部分退；广告分摊排除全额退，部分退按保留占比计基数
   const refundPre = orders.map((o) => {
-    const bill = byOrder.get(o.orderId);
+    const bill = billForOrder(o);
     return analyzeOrderRefund(o, bill || null, isOrderRefunded(o));
   });
   const orderMeta = orders.map((o, i) => {
@@ -120,12 +136,15 @@ export function buildOperatingReport(
   const allocBaseByShop = new Map<string, number>();
   const orderCountByShop = new Map<string, number>();
   for (const m of orderMeta) {
-    allocBaseByShop.set(m.shop, (allocBaseByShop.get(m.shop) || 0) + m.allocBase);
+    allocBaseByShop.set(
+      m.shop,
+      addMoney(allocBaseByShop.get(m.shop) || 0, m.allocBase),
+    );
     if (m.refundKind !== "full") {
       orderCountByShop.set(m.shop, (orderCountByShop.get(m.shop) || 0) + 1);
     }
   }
-  const totalAllocBase = orderMeta.reduce((s, o) => s + o.allocBase, 0);
+  const totalAllocBase = sumMoney(orderMeta.map((o) => o.allocBase));
   const orderCountForAd = Math.max(
     1,
     orderMeta.filter((m) => m.refundKind !== "full").length,
@@ -137,7 +156,10 @@ export function buildOperatingReport(
     if (!m || m.refundKind === "full") continue;
     const pid = normProductId(orders[i].productId || "");
     if (!pid) continue;
-    productAllocBase.set(pid, (productAllocBase.get(pid) || 0) + m.allocBase);
+    productAllocBase.set(
+      pid,
+      addMoney(productAllocBase.get(pid) || 0, m.allocBase),
+    );
   }
   // 若广告未打店铺标签且仅有默认店铺花费，则仍按全局分摊（兼容单店）
   const adShops = Array.from(adSpendByShop.keys());
@@ -161,7 +183,7 @@ export function buildOperatingReport(
       else if (matched.matched) packUnit = settings.defaultPackCost;
     }
 
-    const bill = byOrder.get(o.orderId);
+    const bill = billForOrder(o);
     const billIncome = bill?.income || 0;
     const billRefund = bill?.refund || 0;
     const techFee = bill?.techFee || 0;
@@ -295,7 +317,7 @@ export function buildOperatingReport(
     if (feeStackMode === "settings_only") {
       fees = 0;
     }
-    const estimatedProfit =
+    const estimatedProfit = roundMoney(
       revenue -
       costTotal -
       packTotal -
@@ -304,8 +326,9 @@ export function buildOperatingReport(
       returnLoss -
       repackCost -
       brandPointFee -
-      ecommerceTaxFee;
-    const estimatedProfitAfterAd = estimatedProfit - adAllocated;
+      ecommerceTaxFee,
+    );
+    const estimatedProfitAfterAd = roundMoney(estimatedProfit - adAllocated);
 
     if (!matched.matched) {
       const key = o.merchantSku || o.specName || o.productName || o.orderId;
@@ -320,7 +343,7 @@ export function buildOperatingReport(
         sampleOrderIds: [] as string[],
       };
       u.count += 1;
-      u.amount += o.merchantReceived;
+      u.amount = addMoney(u.amount, o.merchantReceived);
       if (!u.productName && o.productName) u.productName = o.productName;
       if (!u.specName && o.specName) u.specName = o.specName;
       if (!u.merchantSku && o.merchantSku) u.merchantSku = o.merchantSku;
@@ -341,33 +364,33 @@ export function buildOperatingReport(
       status: o.status,
       afterSale: o.afterSale,
       qty: o.qty,
-      merchantReceived: o.merchantReceived,
-      goodsTotal: o.goodsTotal,
-      costPrice: unitCost,
-      costTotal,
-      packUnit,
-      packTotal,
+      merchantReceived: roundMoney(o.merchantReceived),
+      goodsTotal: roundMoney(o.goodsTotal),
+      costPrice: roundMoney(unitCost),
+      costTotal: roundMoney(costTotal),
+      packUnit: roundMoney(packUnit),
+      packTotal: roundMoney(packTotal),
       weightKg,
-      shippingFee,
-      postageIncome,
-      netShipping,
-      shippingLoss,
-      returnLoss,
-      repackCost,
-      brandPointFee,
-      ecommerceTaxFee,
-      adAllocated,
+      shippingFee: roundMoney(shippingFee),
+      postageIncome: roundMoney(postageIncome),
+      netShipping: roundMoney(netShipping),
+      shippingLoss: roundMoney(shippingLoss),
+      returnLoss: roundMoney(returnLoss),
+      repackCost: roundMoney(repackCost),
+      brandPointFee: roundMoney(brandPointFee),
+      ecommerceTaxFee: roundMoney(ecommerceTaxFee),
+      adAllocated: roundMoney(adAllocated),
       costMatched: matched.matched,
       costMatchBy: matched.by,
       shipRuleLabel: shipCalc.ruleLabel,
       expressRuleMatched: shipped ? !!shipCalc.ruleMatched : true,
-      billIncome,
-      billRefund,
-      techFee,
-      otherFee,
-      subsidy,
-      billNet,
-      revenue,
+      billIncome: roundMoney(billIncome),
+      billRefund: roundMoney(billRefund),
+      techFee: roundMoney(techFee),
+      otherFee: roundMoney(otherFee),
+      subsidy: roundMoney(subsidy),
+      billNet: roundMoney(billNet),
+      revenue: roundMoney(revenue),
       estimatedProfit,
       estimatedProfitAfterAd,
       dealTime: o.dealTime,
@@ -381,42 +404,47 @@ export function buildOperatingReport(
       isReturnRefund: returnRefund,
       isShipNotDeal: shipNotDeal,
       refundKind,
-      refundAmount,
+      refundAmount: roundMoney(refundAmount),
       refundRatio,
       residualRatio,
       refundCompareNote,
     };
   });
 
-  const goodsTotal = orders.reduce((s, o) => s + o.goodsTotal, 0);
-  const merchantReceived = orders.reduce((s, o) => s + o.merchantReceived, 0);
-  const buyerPaid = orders.reduce((s, o) => s + o.buyerPaid, 0);
+  const goodsTotal = sumMoney(orders.map((o) => o.goodsTotal));
+  const merchantReceived = sumMoney(orders.map((o) => o.merchantReceived));
+  const buyerPaid = sumMoney(orders.map((o) => o.buyerPaid));
 
   const refundOrders = orderProfits.filter((o) => o.isRefunded);
   const refundOrderCount = refundOrders.length;
-  const refundOrderAmount = refundOrders.reduce((s, o) => s + o.goodsTotal, 0);
+  const refundOrderAmount = sumMoney(refundOrders.map((o) => o.goodsTotal));
   const fullRefundOrders = orderProfits.filter((o) => o.refundKind === "full");
   const partialRefundOrders = orderProfits.filter((o) => o.refundKind === "partial");
   const fullRefundCount = fullRefundOrders.length;
   const partialRefundCount = partialRefundOrders.length;
-  const refundCashTotal = orderProfits.reduce((s, o) => s + (o.refundAmount || 0), 0);
-  const partialRefundResidualRevenue = partialRefundOrders.reduce(
-    (s, o) => s + o.revenue,
-    0,
+  const refundCashTotal = sumMoney(
+    orderProfits.map((o) => o.refundAmount || 0),
+  );
+  const partialRefundResidualRevenue = sumMoney(
+    partialRefundOrders.map((o) => o.revenue),
   );
   // 退款单上：账务/推断实退 - 仍保留的商家实收（正=退得多于实收残留解释，负=实收仍高于退款）
-  const refundVsReceivedGapTotal = refundOrders.reduce((s, o) => {
-    return s + ((o.refundAmount || 0) - (o.merchantReceived || 0));
-  }, 0);
+  const refundVsReceivedGapTotal = sumMoney(
+    refundOrders.map(
+      (o) => (o.refundAmount || 0) - (o.merchantReceived || 0),
+    ),
+  );
   const refundRateByCount = orders.length > 0 ? refundOrderCount / orders.length : 0;
   const refundRateByAmount = goodsTotal > 0 ? refundOrderAmount / goodsTotal : 0;
 
   const shippedOrders = orderProfits.filter((o) => o.isShipped);
   const shippedOrderCount = shippedOrders.length;
-  const shippedAmount = shippedOrders.reduce((s, o) => s + o.goodsTotal, 0);
+  const shippedAmount = sumMoney(shippedOrders.map((o) => o.goodsTotal));
   const postShipRefunds = orderProfits.filter((o) => o.isPostShipRefund);
   const postShipRefundCount = postShipRefunds.length;
-  const postShipRefundAmount = postShipRefunds.reduce((s, o) => s + o.goodsTotal, 0);
+  const postShipRefundAmount = sumMoney(
+    postShipRefunds.map((o) => o.goodsTotal),
+  );
   const postShipRefundRateByCount =
     shippedOrderCount > 0 ? postShipRefundCount / shippedOrderCount : 0;
   const postShipRefundRateByAmount =
@@ -430,23 +458,29 @@ export function buildOperatingReport(
     (o) => o.isPostShipRefund && !o.isReturnRefund,
   );
   const shipOnlyRefundCount = shipOnlyRefunds.length;
-  const shipOnlyRefundAmount = shipOnlyRefunds.reduce((s, o) => s + o.goodsTotal, 0);
+  const shipOnlyRefundAmount = sumMoney(
+    shipOnlyRefunds.map((o) => o.goodsTotal),
+  );
   // 签收后退货（仅已收货退款成功）
   const signedReturns = orderProfits.filter((o) => o.isReturnRefund);
   const signedReturnCount = signedReturns.length;
-  const signedReturnAmount = signedReturns.reduce((s, o) => s + o.goodsTotal, 0);
+  const signedReturnAmount = sumMoney(signedReturns.map((o) => o.goodsTotal));
   // 已收货相关（已收货成功 + 已收货退款）
   const receivedRelated = orderProfits.filter(
     (o) => /已收货/.test(o.status) || o.isReturnRefund,
   );
   const receivedRelatedCount = receivedRelated.length || 0;
-  const receivedRelatedAmount = receivedRelated.reduce((sum, o) => sum + o.goodsTotal, 0);
+  const receivedRelatedAmount = sumMoney(
+    receivedRelated.map((o) => o.goodsTotal),
+  );
   // 未发货退款 = 总退款 - 发货后退款
   const unshippedRefunds = orderProfits.filter(
     (o) => o.isRefunded && !o.isPostShipRefund,
   );
   const unshippedRefundCount = unshippedRefunds.length;
-  const unshippedRefundAmount = unshippedRefunds.reduce((sum, o) => sum + o.goodsTotal, 0);
+  const unshippedRefundAmount = sumMoney(
+    unshippedRefunds.map((o) => o.goodsTotal),
+  );
   // 主口径：退货退款率 = 发货后全部退 / 已发货
   const returnRefundRateByCount = postShipRefundRateByCount;
   const returnRefundRateByAmount = postShipRefundRateByAmount;
@@ -462,26 +496,85 @@ export function buildOperatingReport(
     receivedRelatedAmount > 0 ? signedReturnAmount / receivedRelatedAmount : 0;
 
   const shipNotDealCount = orderProfits.filter((o) => o.isShipNotDeal).length;
-  const orderConfirmedRevenue = orderProfits.reduce((s, o) => s + (o.revenue || 0), 0);
-  // 自然月主口径：有账务表时，确认收入取本月全部交易收入-退款+补贴；
-  // 无账务表时才回退到订单逐单确认收入。
+  const orderConfirmedRevenue = sumMoney(
+    orderProfits.map((o) => o.revenue || 0),
+  );
+  const ledgerConfirmedRevenue = roundMoney(
+    totals.income - totals.refund + totals.subsidy,
+  );
+  const coverageOrders = orders.filter(
+    (order) => !/已取消/.test(String(order.status || "")),
+  );
+  const billMatchedOrders = coverageOrders.filter(
+    (order) => !!billForOrder(order),
+  ).length;
+  const billOrderCoverageRate =
+    coverageOrders.length > 0
+      ? billMatchedOrders / coverageOrders.length
+      : billLines.length > 0
+        ? 1
+        : 0;
+  const billAmountCoverageRate =
+    orderConfirmedRevenue > 0.01
+      ? ledgerConfirmedRevenue / orderConfirmedRevenue
+      : Math.abs(ledgerConfirmedRevenue) <= 0.01
+        ? 1
+        : Number.POSITIVE_INFINITY;
+  const amountCoverageLooksComplete =
+    billAmountCoverageRate >= 0.5 && billAmountCoverageRate <= 1.5;
+  const billCoverageLooksComplete =
+    coverageOrders.length === 0 ||
+    (billOrderCoverageRate >= 0.8 && amountCoverageLooksComplete);
+  const revenueBasisMode = settings.revenueBasisMode || "auto";
+  const revenueBasisUsed: "ledger" | "orders" =
+    revenueBasisMode === "ledger"
+      ? "ledger"
+      : revenueBasisMode === "orders"
+        ? "orders"
+        : billLines.length > 0 && billCoverageLooksComplete
+          ? "ledger"
+          : "orders";
   const confirmedRevenue =
-    billLines.length > 0
-      ? totals.income - totals.refund + totals.subsidy
+    revenueBasisUsed === "ledger"
+      ? ledgerConfirmedRevenue
       : orderConfirmedRevenue;
-  const costTotal = orderProfits.reduce((s, o) => s + o.costTotal, 0);
-  const packTotal = orderProfits.reduce((s, o) => s + o.packTotal, 0);
-  const shippingTotal = orderProfits.reduce((s, o) => s + o.shippingFee, 0);
-  const postageIncomeTotal = orderProfits.reduce((s, o) => s + o.postageIncome, 0);
-  const netShippingTotal = orderProfits.reduce((s, o) => s + o.netShipping, 0);
-  const shippingLossTotal = orderProfits.reduce((s, o) => s + o.shippingLoss, 0);
-  const returnLossTotal = orderProfits.reduce((s, o) => s + o.returnLoss, 0);
-  const repackCostTotal = orderProfits.reduce((s, o) => s + o.repackCost, 0);
-  const brandPointTotal = orderProfits.reduce((s, o) => s + o.brandPointFee, 0);
-  const ecommerceTaxTotal = orderProfits.reduce((s, o) => s + o.ecommerceTaxFee, 0);
-  const adAllocatedTotal = orderProfits.reduce((s, o) => s + o.adAllocated, 0);
-  const techFeeAttributed = orderProfits.reduce((s, o) => s + (o.techFee || 0), 0);
-  const otherFeeAttributed = orderProfits.reduce((s, o) => s + (o.otherFee || 0), 0);
+  const billCoverageWarning =
+    billLines.length > 0 && !billCoverageLooksComplete
+      ? `账务覆盖可能不完整：订单匹配 ${(billOrderCoverageRate * 100).toFixed(
+          1,
+        )}%，金额覆盖 ${
+          Number.isFinite(billAmountCoverageRate)
+            ? `${(billAmountCoverageRate * 100).toFixed(1)}%`
+            : "不可比"
+        }。${
+          revenueBasisUsed === "orders"
+            ? "已自动回退订单逐单确认收入。"
+            : "当前已强制使用账务口径，请确认账期和店铺齐全。"
+        }`
+      : "";
+  const costTotal = sumMoney(orderProfits.map((o) => o.costTotal));
+  const packTotal = sumMoney(orderProfits.map((o) => o.packTotal));
+  const shippingTotal = sumMoney(orderProfits.map((o) => o.shippingFee));
+  const postageIncomeTotal = sumMoney(
+    orderProfits.map((o) => o.postageIncome),
+  );
+  const netShippingTotal = sumMoney(orderProfits.map((o) => o.netShipping));
+  const shippingLossTotal = sumMoney(
+    orderProfits.map((o) => o.shippingLoss),
+  );
+  const returnLossTotal = sumMoney(orderProfits.map((o) => o.returnLoss));
+  const repackCostTotal = sumMoney(orderProfits.map((o) => o.repackCost));
+  const brandPointTotal = sumMoney(orderProfits.map((o) => o.brandPointFee));
+  const ecommerceTaxTotal = sumMoney(
+    orderProfits.map((o) => o.ecommerceTaxFee),
+  );
+  const adAllocatedTotal = sumMoney(orderProfits.map((o) => o.adAllocated));
+  const techFeeAttributed = sumMoney(
+    orderProfits.map((o) => o.techFee || 0),
+  );
+  const otherFeeAttributed = sumMoney(
+    orderProfits.map((o) => o.otherFee || 0),
+  );
   const unknownRefundCount = orderProfits.filter((o) => o.refundKind === "unknown").length;
   const cancelledOrderCount = orderProfits.filter((o) => /已取消/.test(String(o.status || ""))).length;
 
@@ -506,29 +599,32 @@ export function buildOperatingReport(
     (settings.feeStackMode || "both") === "settings_only"
       ? 0
       : totals.techFee + totals.otherFee;
-  const profitOpsBase =
+  const profitOpsBase = roundMoney(
     confirmedRevenue -
     costTotal -
     packTotal -
     netShippingTotal -
-    periodPlatformFees;
-  const returnRelatedCost = returnLossTotal + repackCostTotal;
+    periodPlatformFees,
+  );
+  const returnRelatedCost = roundMoney(returnLossTotal + repackCostTotal);
   // 不含损耗运费：主毛利已扣 netShipping，损耗运费仅作展示项，避免叙事重复
-  const marginEatenTotal =
+  const marginEatenTotal = roundMoney(
     returnRelatedCost +
     brandPointTotal +
     ecommerceTaxTotal +
-    adSpend;
+    adSpend,
+  );
   const costMatchedOrders = orderProfits.filter((o) => o.costMatched).length;
-  const costUnmatchedAmount = orderProfits
-    .filter((o) => !o.costMatched)
-    .reduce((s, o) => s + o.merchantReceived, 0);
+  const costUnmatchedAmount = sumMoney(
+    orderProfits.filter((o) => !o.costMatched).map((o) => o.merchantReceived),
+  );
 
-  const profitBefore =
+  const profitBefore = roundMoney(
     profitOpsBase -
     returnRelatedCost -
     brandPointTotal -
-    ecommerceTaxTotal;
+    ecommerceTaxTotal,
+  );
   // 汇总始终扣总广告：订单已摊 + 未摊到单的部分（none/无商品ID/未匹配推广）
   const unallocatedAd = Math.max(0, adSpend - adAllocatedTotal);
   let adMatchWarning = "";
@@ -542,8 +638,10 @@ export function buildOperatingReport(
     adMatchWarning =
       "当前按商品ID分摊，但明细分摊为0；汇总毛利已全额扣除广告花费。";
   }
-  const profitAfter = profitBefore - adSpend;
-  const profitAfterAdBeforeShipping = profitAfter + netShippingTotal;
+  const profitAfter = roundMoney(profitBefore - adSpend);
+  const profitAfterAdBeforeShipping = roundMoney(
+    profitAfter + netShippingTotal,
+  );
   const profitMargin =
     confirmedRevenue > 0 ? profitAfter / confirmedRevenue : 0;
   const profitMarginBeforeShipping =
@@ -565,7 +663,10 @@ export function buildOperatingReport(
     const m = raw.match(/(\d{4})[-/年.](\d{1,2})/);
     if (!m) continue;
     const key = `${m[1]}-${String(m[2]).padStart(2, "0")}`;
-    adSpendByMonth.set(key, (adSpendByMonth.get(key) || 0) + (d.spend || 0));
+    adSpendByMonth.set(
+      key,
+      addMoney(adSpendByMonth.get(key) || 0, d.spend || 0),
+    );
   }
   const monthMrTotal = Array.from(monthMap.entries())
     .filter(([m]) => m !== "未知")
@@ -575,14 +676,14 @@ export function buildOperatingReport(
     .filter(([m]) => m !== "未知")
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([month, rows]) => {
-      const gt = rows.reduce((s, r) => s + r.goodsTotal, 0);
-      const mr = rows.reduce((s, r) => s + r.merchantReceived, 0);
-      const revenue = rows.reduce((s, r) => s + r.revenue, 0);
+      const gt = sumMoney(rows.map((r) => r.goodsTotal));
+      const mr = sumMoney(rows.map((r) => r.merchantReceived));
+      const revenue = sumMoney(rows.map((r) => r.revenue));
       const ref = rows.filter((r) => r.isRefunded);
       const shipped = rows.filter((r) => r.isShipped);
       const psr = rows.filter((r) => r.isPostShipRefund);
-      const pb = rows.reduce((s, r) => s + r.estimatedProfit, 0);
-      const allocated = rows.reduce((s, r) => s + r.adAllocated, 0);
+      const pb = sumMoney(rows.map((r) => r.estimatedProfit));
+      const allocated = sumMoney(rows.map((r) => r.adAllocated));
       // 该月应扣广告：优先分天；否则按实收占比；且不少于已摊到单的金额
       let monthAd = adSpendByMonth.get(month) || 0;
       if (monthAd <= 0 && adSpend > 0 && monthMrTotal > 0) {
@@ -594,7 +695,7 @@ export function buildOperatingReport(
         monthAd = monthAd * (adSpend / daySum);
       }
       const monthAdCost = Math.max(allocated, monthAd);
-      const pa = pb - monthAdCost;
+      const pa = roundMoney(pb - monthAdCost);
       return {
         month,
         orderCount: rows.length,
@@ -605,12 +706,12 @@ export function buildOperatingReport(
         refundRateByAmount: gt > 0 ? ref.reduce((s, r) => s + r.goodsTotal, 0) / gt : 0,
         postShipRefundCount: psr.length,
         postShipRefundRateByCount: shipped.length ? psr.length / shipped.length : 0,
-        shippingLossTotal: rows.reduce((s, r) => s + r.shippingLoss, 0),
-        netShippingTotal: rows.reduce((s, r) => s + r.netShipping, 0),
+        shippingLossTotal: sumMoney(rows.map((r) => r.shippingLoss)),
+        netShippingTotal: sumMoney(rows.map((r) => r.netShipping)),
         profitBeforeAd: pb,
         profitAfterAd: pa,
         profitMargin: revenue > 0 ? pa / revenue : 0,
-        adAllocated: monthAdCost,
+        adAllocated: roundMoney(monthAdCost),
       };
     });
   const latestMonth = months.length ? months[months.length - 1].month : undefined;
@@ -628,6 +729,10 @@ export function buildOperatingReport(
     merchantReceived,
     confirmedRevenue,
     orderConfirmedRevenue,
+    revenueBasisUsed,
+    billOrderCoverageRate,
+    billAmountCoverageRate,
+    billCoverageWarning,
     buyerPaid,
     refundOrderCount,
     refundOrderAmount,
@@ -778,8 +883,25 @@ export function buildOperatingReport(
     ["商品总价合计", summary.goodsTotal.toFixed(2)],
     ["用户实付合计", summary.buyerPaid.toFixed(2)],
     ["商家实收合计", summary.merchantReceived.toFixed(2)],
-    ["确认收入合计(自然月账务收入-退款+补贴)", summary.confirmedRevenue.toFixed(2)],
+    [
+      summary.revenueBasisUsed === "ledger"
+        ? "确认收入合计(自然月账务收入-退款+补贴)"
+        : "确认收入合计(订单逐单口径)",
+      summary.confirmedRevenue.toFixed(2),
+    ],
     ["订单逐单确认收入(对照)", summary.orderConfirmedRevenue.toFixed(2)],
+    [
+      "确认收入实际采用口径",
+      summary.revenueBasisUsed === "ledger" ? "账务自然月" : "订单逐单",
+    ],
+    ["账务订单覆盖率", `${(summary.billOrderCoverageRate * 100).toFixed(1)}%`],
+    [
+      "账务金额覆盖率",
+      Number.isFinite(summary.billAmountCoverageRate)
+        ? `${(summary.billAmountCoverageRate * 100).toFixed(1)}%`
+        : "不可比",
+    ],
+    ["账务完整性告警", summary.billCoverageWarning || "无"],
     [
       "账务平台费进毛利",
       settings.feeStackMode === "settings_only" ? "否(仅展示)" : "是",

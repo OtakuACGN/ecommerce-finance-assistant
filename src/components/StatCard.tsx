@@ -71,7 +71,7 @@ export default function StatCard({
   const t = TONE[tone];
   const clickable = typeof onClick === "function";
   const wrapClass =
-    "stat-card rounded-xl border p-3 transition-all duration-150 " +
+    "stat-card rounded-xl border p-3 transition-[background-color,border-color,color,box-shadow,transform] duration-150 " +
     t.wrap +
     " " +
     (clickable ? "cursor-pointer hover:shadow-md hover:-translate-y-0.5 " : "") +

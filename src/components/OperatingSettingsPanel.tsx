@@ -82,6 +82,12 @@ export default function OperatingSettingsPanel({
                   : "未填"}
                 · 包材 ¥{opCostSettings.defaultPackCost}
                 · 广告分摊 {opCostSettings.adAllocateMode}
+                · 确认收入{" "}
+                {opCostSettings.revenueBasisMode === "ledger"
+                  ? "强制账务"
+                  : opCostSettings.revenueBasisMode === "orders"
+                    ? "强制订单"
+                    : "自动校验"}
                 · 退货损耗{" "}
                 {Math.round((opCostSettings.returnRestockRate || 0) * 100)}%
                 · 账务平台费
@@ -93,6 +99,29 @@ export default function OperatingSettingsPanel({
             {opSettingsOpen && (
             <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <label className="flex flex-col gap-1 col-span-2 md:col-span-4">
+                <span className="text-xs text-gray-500">确认收入口径</span>
+                <select
+                  value={opCostSettings.revenueBasisMode || "auto"}
+                  onChange={(event) =>
+                    setOpCostSettings((settings) => ({
+                      ...settings,
+                      revenueBasisMode: event.target
+                        .value as CostSettings["revenueBasisMode"],
+                    }))
+                  }
+                  className="border rounded-lg px-2 py-1 bg-white"
+                >
+                  <option value="auto">
+                    自动校验（账务完整时用账务，否则回退订单）
+                  </option>
+                  <option value="ledger">强制账务自然月口径</option>
+                  <option value="orders">强制订单逐单口径</option>
+                </select>
+                <span className="text-[11px] text-slate-500">
+                  推荐自动校验。强制账务前请确认店铺、账期和文件均已导齐。
+                </span>
+              </label>
               <label className="flex flex-col gap-1">
                 <span className="text-xs text-gray-500">默认首重(kg)</span>
                 <input

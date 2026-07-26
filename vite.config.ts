@@ -1,54 +1,48 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
-import renderer from 'vite-plugin-electron-renderer'
-import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import path from 'path'
 
 export default defineConfig({
   plugins: [
     react(),
-    nodePolyfills({
-      // Enable polyfills for xlsx
-      globals: { Buffer: true, process: true },
-      include: ['buffer'],
-    }),
     electron([
       {
-        entry: 'electron/main.ts',
         onstart(options) {
           options.startup()
         },
         vite: {
           build: {
             outDir: 'dist-electron',
-            rollupOptions: {
+            rolldownOptions: {
+              input: 'electron/main.ts',
               external: ['electron'],
               output: {
-                entryFileNames: '[name].cjs'
+                entryFileNames: '[name].cjs',
+                format: 'cjs'
               }
             }
           }
         }
       },
       {
-        entry: 'electron/preload.ts',
         onstart(options) {
           options.reload()
         },
         vite: {
           build: {
             outDir: 'dist-electron',
-            rollupOptions: {
+            rolldownOptions: {
+              input: 'electron/preload.ts',
               output: {
-                entryFileNames: '[name].cjs'
+                entryFileNames: '[name].cjs',
+                format: 'cjs'
               }
             }
           }
         }
       }
-    ]),
-    renderer()
+    ])
   ],
   resolve: {
     alias: {

@@ -14,7 +14,11 @@ interface ToastProps {
 
 export default function Toast({ toasts, onDismiss }: ToastProps) {
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+    <div
+      className="fixed bottom-4 right-4 z-50 flex max-w-[min(26rem,calc(100vw-2rem))] flex-col gap-2"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />
       ))}
@@ -32,9 +36,9 @@ function ToastItem({ toast, onDismiss }: { toast: ToastMessage; onDismiss: (id: 
   }, [toast.id]);
 
   const icons = {
-    success: <CheckCircle size={16} className="text-green-500" />,
-    warning: <AlertCircle size={16} className="text-yellow-500" />,
-    error: <XCircle size={16} className="text-red-500" />,
+    success: <CheckCircle size={16} className="text-green-500" aria-hidden />,
+    warning: <AlertCircle size={16} className="text-yellow-500" aria-hidden />,
+    error: <XCircle size={16} className="text-red-500" aria-hidden />,
   };
 
   const bg = {
@@ -44,11 +48,19 @@ function ToastItem({ toast, onDismiss }: { toast: ToastMessage; onDismiss: (id: 
   };
 
   return (
-    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg ${bg[toast.type]} min-w-64`}>
+    <div
+      className={`flex min-w-64 items-start gap-2 rounded-lg border px-4 py-3 shadow-lg ${bg[toast.type]}`}
+      role={toast.type === "error" ? "alert" : "status"}
+    >
       {icons[toast.type]}
-      <span className="text-sm text-gray-700 flex-1">{toast.message}</span>
-      <button onClick={() => onDismiss(toast.id)} className="text-gray-400 hover:text-gray-600">
-        <X size={14} />
+      <span className="min-w-0 flex-1 break-words text-sm text-gray-700">{toast.message}</span>
+      <button
+        type="button"
+        onClick={() => onDismiss(toast.id)}
+        className="shrink-0 rounded text-gray-400 hover:text-gray-600"
+        aria-label="关闭通知"
+      >
+        <X size={14} aria-hidden />
       </button>
     </div>
   );

@@ -89,6 +89,8 @@ export interface AdDay {
   impressions: number;
   clicks: number;
   shopName?: string;
+  /** 导入来源文件；同店铺同文件重导时用于替换旧数据 */
+  sourceName?: string;
 }
 
 /** 商品推广汇总（按商品ID真实归属，非均摊） */
@@ -139,6 +141,13 @@ export interface CostSettings {
   usePostageIncome: boolean;
   /** 推广费分摊方式 */
   adAllocateMode: "by_product" | "by_gmv" | "by_order_count" | "none";
+  /**
+   * 确认收入口径：
+   * - auto: 账务覆盖充分时用账务，否则回退订单并提示
+   * - ledger: 强制账务自然月口径
+   * - orders: 强制订单逐单口径
+   */
+  revenueBasisMode: "auto" | "ledger" | "orders";
   /**
    * 品牌扣点 %（如 5 表示 5%）
    * 按 feeBaseMode 基数计提，从毛利扣减
@@ -202,6 +211,7 @@ export const DEFAULT_COST_SETTINGS: CostSettings = {
   returnRepackCost: 0.5,
   usePostageIncome: true,
   adAllocateMode: "by_product", // 有商品推广时按商品ID摊到单；无则仅汇总扣总广告
+  revenueBasisMode: "auto",
   brandPointPct: 0,
   ecommerceTaxPct: 0,
   feeBaseMode: "revenue",
@@ -368,6 +378,14 @@ export interface OperatingSummary {
   confirmedRevenue: number;
   /** 订单逐单确认收入；用于和自然月账务收入桥接 */
   orderConfirmedRevenue: number;
+  /** 本次实际采用的确认收入口径 */
+  revenueBasisUsed: "ledger" | "orders";
+  /** 有效订单中能找到对应账务的比例 0-1 */
+  billOrderCoverageRate: number;
+  /** 账务确认收入 / 订单逐单确认收入 */
+  billAmountCoverageRate: number;
+  /** 账务完整性提示；空字符串表示未发现风险 */
+  billCoverageWarning: string;
   buyerPaid: number;
   refundOrderCount: number;
   refundOrderAmount: number;

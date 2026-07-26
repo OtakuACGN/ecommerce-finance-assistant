@@ -28,6 +28,15 @@ export interface RebateTier {
   label: string;
 }
 
+/** 常用品牌阶梯返利模板（GMV 单位：万元），可在界面按合同修改。 */
+export const DEFAULT_REBATE_TIERS: RebateTier[] = [
+  { min: 0, max: 50, rate: 2, label: "0-50万" },
+  { min: 50, max: 100, rate: 3, label: "50-100万" },
+  { min: 100, max: 200, rate: 4, label: "100-200万" },
+  { min: 200, max: 500, rate: 5, label: "200-500万" },
+  { min: 500, max: 0, rate: 6, label: "500万以上" },
+];
+
 export interface RefundOrder {
   platform: string;
   orderId: string;
@@ -271,33 +280,105 @@ export function reconcilePayments(
   paymentData: any[][]
 ): any[][] {
   if (currentData.length === 0 || paymentData.length === 0) return [];
+  const orderHeaders = (currentData[0] || []).map(String);
+  const paymentHeaders = (paymentData[0] || []).map(String);
+  const orderIdCol = findCol(orderHeaders, [
+    "订单号",
+    "订单编号",
+    "商户订单号",
+    "order id",
+  ]);
+  const paymentIdCol = findCol(paymentHeaders, [
+    "订单号",
+    "订单编号",
+    "商户订单号",
+    "order id",
+  ]);
+  const orderAmountCol = findCol(orderHeaders, [
+    "订单金额",
+    "商品总价",
+    "商家实收",
+    "用户实付",
+    "amount",
+  ]);
+  const paymentAmountCol = findCol(paymentHeaders, [
+    "收款金额",
+    "支付金额",
+    "入账金额",
+    "实收金额",
+    "amount",
+  ]);
   const orderRows = currentData.slice(1);
   const paymentRows = paymentData.slice(1);
   const reconciled: any[][] = [["订单金额", "收款金额", "状态", "说明"]];
-  const unmatchedPayments = [...paymentRows];
+  const usedPayments = new Set<number>();
+  const amountOf = (row: any[], column: number) =>
+    column >= 0
+      ? Math.abs(
+          parseFloat(String(row[column] ?? "").replace(/[¥￥$,，\s]/g, "")),
+        ) || 0
+      : 0;
+  const idOf = (row: any[], column: number) =>
+    column >= 0 ? String(row[column] ?? "").trim().replace(/\.0$/, "") : "";
+  const orderAmountCounts = new Map<number, number>();
+  const paymentAmountCounts = new Map<number, number>();
+  for (const row of orderRows) {
+    const amount = amountOf(row, orderAmountCol);
+    if (amount > 0)
+      orderAmountCounts.set(amount, (orderAmountCounts.get(amount) || 0) + 1);
+  }
+  for (const row of paymentRows) {
+    const amount = amountOf(row, paymentAmountCol);
+    if (amount > 0)
+      paymentAmountCounts.set(amount, (paymentAmountCounts.get(amount) || 0) + 1);
+  }
 
   orderRows.forEach((order) => {
-    const orderAmount = findAmount(order);
+    const orderAmount = amountOf(order, orderAmountCol);
     if (orderAmount === 0) return;
-    const matchIdx = unmatchedPayments.findIndex(
-      (pay) => Math.abs(findAmount(pay) - orderAmount) < 0.01
-    );
+    const orderId = idOf(order, orderIdCol);
+    let matchIdx =
+      orderId && paymentIdCol >= 0
+        ? paymentRows.findIndex(
+            (pay, index) =>
+              !usedPayments.has(index) &&
+              idOf(pay, paymentIdCol) === orderId,
+          )
+        : -1;
+    if (
+      matchIdx < 0 &&
+      orderAmountCounts.get(orderAmount) === 1 &&
+      paymentAmountCounts.get(orderAmount) === 1
+    ) {
+      matchIdx = paymentRows.findIndex(
+        (pay, index) =>
+          !usedPayments.has(index) &&
+          Math.abs(amountOf(pay, paymentAmountCol) - orderAmount) < 0.01,
+      );
+    }
     if (matchIdx >= 0) {
+      usedPayments.add(matchIdx);
       reconciled.push([
         orderAmount,
-        findAmount(unmatchedPayments[matchIdx]),
+        amountOf(paymentRows[matchIdx], paymentAmountCol),
         "已核销",
-        "匹配成功",
+        orderId ? "订单号匹配" : "唯一金额匹配",
       ]);
-      unmatchedPayments.splice(matchIdx, 1);
     } else {
       reconciled.push([orderAmount, "", "未匹配", "无对应收款记录"]);
     }
   });
 
-  unmatchedPayments.forEach((pay) =>
-    reconciled.push(["", findAmount(pay), "未认领", "无对应订单"])
-  );
+  paymentRows.forEach((pay, index) => {
+    if (!usedPayments.has(index)) {
+      reconciled.push([
+        "",
+        amountOf(pay, paymentAmountCol),
+        "未认领",
+        "无对应订单",
+      ]);
+    }
+  });
   return reconciled;
 }
 

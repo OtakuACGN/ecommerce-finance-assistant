@@ -16,7 +16,10 @@ import {
   detectPlatform,
 } from "../services/businessLogic";
 import { guessShopNameFromFile, ingestForOperating } from "../services/pddBusiness";
-import { replaceBillRecordSource } from "../services/billRecords";
+import {
+  replaceBillRecordSource,
+  replaceBillRecordSources,
+} from "../services/billRecords";
 import {
   buildAccrualTable,
   buildRefundLossTable,
@@ -71,13 +74,13 @@ export function useBillRefundHandlers(deps: BillRefundHandlerDeps) {
           const fileData = await processFile(filePath);
           if (!fileData) continue;
           const ingested = ingestForOperating(fileData);
-          if (ingested.kind === "pdd_bill" && ingested.billRecord) {
-            const record = {
-              ...ingested.billRecord,
+          if (ingested.kind === "pdd_bill" && ingested.billRecords?.length) {
+            const records = ingested.billRecords.map((record) => ({
+              ...record,
               sourceName: fileData.name,
               shopName: guessShopNameFromFile(fileData.name),
-            };
-            setBillRecords((prev) => replaceBillRecordSource(prev, record));
+            }));
+            setBillRecords((prev) => replaceBillRecordSources(prev, records));
             showToast(
               `已识别拼多多账务明细：${ingested.billLines.length} 行流水`,
               "success",

@@ -17,12 +17,20 @@ export function replaceBillRecordSource(
   existing: BillRecord[],
   incoming: BillRecord,
 ): BillRecord[] {
-  const incomingKey = billSourceKey(incoming);
-  if (!incomingKey.endsWith("||")) {
-    return [
-      ...existing.filter((record) => billSourceKey(record) !== incomingKey),
-      incoming,
-    ];
-  }
-  return [...existing, incoming];
+  return replaceBillRecordSources(existing, [incoming]);
+}
+
+/** 同一来源拆成多个月份记录时，整批原子替换，避免重导后重复或只剩最后一月。 */
+export function replaceBillRecordSources(
+  existing: BillRecord[],
+  incoming: BillRecord[],
+): BillRecord[] {
+  if (incoming.length === 0) return existing;
+  const incomingKeys = new Set(
+    incoming.map(billSourceKey).filter((key) => !key.endsWith("||")),
+  );
+  return [
+    ...existing.filter((record) => !incomingKeys.has(billSourceKey(record))),
+    ...incoming,
+  ];
 }

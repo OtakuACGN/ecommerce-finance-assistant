@@ -1,3 +1,4 @@
+import { useEffect, useId, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 
 export interface ConfirmAction {
@@ -33,25 +34,73 @@ export default function ConfirmDialog({
   disabled = false,
   actions,
 }: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef(onCancel);
+  const titleId = useId();
+  const messageId = useId();
+  cancelRef.current = onCancel;
+
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    const focusable = dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    focusable?.[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !disabled) {
+        event.preventDefault();
+        cancelRef.current();
+      }
+      if (event.key !== "Tab" || !focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [open, disabled]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain p-4">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default bg-black/40"
+        onClick={onCancel}
+        aria-label="关闭确认对话框"
+      />
       <div
-        className="bg-white rounded-xl shadow-2xl w-[min(28rem,92vw)] p-6"
-        onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
+        className="relative w-[min(28rem,92vw)] rounded-xl bg-white p-6 shadow-2xl"
       >
         <div className="flex items-start gap-3 mb-4">
-          <AlertTriangle size={20} className="text-yellow-500 mt-0.5 shrink-0" />
-          <div>
-            <h3 className="font-semibold text-gray-800">{title}</h3>
-            <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{message}</p>
+          <AlertTriangle size={20} className="text-yellow-500 mt-0.5 shrink-0" aria-hidden />
+          <div className="min-w-0">
+            <h3 id={titleId} className="text-pretty font-semibold text-gray-800">{title}</h3>
+            <p id={messageId} className="mt-1 whitespace-pre-line break-words text-sm text-gray-600">{message}</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
           {actions && actions.length > 0 ? (
             <>
               <button
+                type="button"
                 onClick={onCancel}
                 disabled={disabled}
                 className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50"
@@ -81,6 +130,7 @@ export default function ConfirmDialog({
           ) : (
             <>
               <button
+                type="button"
                 onClick={onCancel}
                 disabled={disabled}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50"
@@ -95,7 +145,7 @@ export default function ConfirmDialog({
                 disabled={disabled}
                 className={`px-4 py-2 text-white rounded-lg text-sm ${confirmClassName}`}
               >
-                {disabled ? "处理中..." : confirmLabel}
+                {disabled ? "处理中…" : confirmLabel}
               </button>
             </>
           )}

@@ -11,12 +11,15 @@ import type {
   ProductSku,
 } from "./types";
 import {
+  addMoney,
+  roundMoney,
   toNum,
   cell,
   cellId,
   findColExactThen,
   cellTime,
 } from "./helpers";
+import { normalizeShopName } from "./logistics";
 
 export function normalizeHeader(h: any): string {
   return String(h ?? "")
@@ -232,6 +235,12 @@ export function parsePddBillLines(fileData: FileData): PddBillLine[] {
   })).filter((l) => l.orderId || l.billType || l.income || l.expense);
 }
 
+export function billOrderKey(orderId: string, shopName?: string): string {
+  const id = String(orderId || "(无订单号)").trim() || "(无订单号)";
+  const shop = normalizeShopName(shopName);
+  return shop === "默认店铺" ? id : `${shop}||${id}`;
+}
+
 function classifyBillLine(
   line: PddBillLine,
 ): "income" | "refund" | "tech" | "tech_refund" | "subsidy" | "ad" | "withdraw" | "other" {
@@ -291,14 +300,15 @@ export function aggregatePddBill(lines: PddBillLine[]): {
   for (const line of lines) {
     const typeKey = line.billType || "其他";
     const typeAgg = byType.get(typeKey) || { income: 0, expense: 0, count: 0 };
-    typeAgg.income += line.income;
-    typeAgg.expense += line.expense;
+    typeAgg.income = addMoney(typeAgg.income, line.income);
+    typeAgg.expense = addMoney(typeAgg.expense, line.expense);
     typeAgg.count += 1;
     byType.set(typeKey, typeAgg);
 
     const orderId = line.orderId || "(无订单号)";
+    const orderKey = billOrderKey(orderId, line.shopName);
     const agg =
-      byOrder.get(orderId) ||
+      byOrder.get(orderKey) ||
       ({
         orderId,
         income: 0,
@@ -313,56 +323,63 @@ export function aggregatePddBill(lines: PddBillLine[]): {
 
     const kind = classifyBillLine(line);
     if (kind === "income") {
-      agg.income += line.income;
-      totals.income += line.income;
+      agg.income = addMoney(agg.income, line.income);
+      totals.income = addMoney(totals.income, line.income);
     } else if (kind === "refund") {
       const amt = line.expense || line.income;
-      agg.refund += amt;
-      totals.refund += amt;
+      agg.refund = addMoney(agg.refund, amt);
+      totals.refund = addMoney(totals.refund, amt);
     } else if (kind === "tech") {
       const amt = line.expense || line.income;
-      agg.techFee += amt;
-      totals.techFee += amt;
+      agg.techFee = addMoney(agg.techFee, amt);
+      totals.techFee = addMoney(totals.techFee, amt);
     } else if (kind === "tech_refund") {
       const amt = line.income || line.expense;
-      agg.techFeeRefund += amt;
-      totals.techFeeRefund += amt;
+      agg.techFeeRefund = addMoney(agg.techFeeRefund, amt);
+      totals.techFeeRefund = addMoney(totals.techFeeRefund, amt);
     } else if (kind === "subsidy") {
       const amt = line.income - line.expense;
-      agg.subsidy += amt;
-      totals.subsidy += amt;
+      agg.subsidy = addMoney(agg.subsidy, amt);
+      totals.subsidy = addMoney(totals.subsidy, amt);
     } else if (kind === "ad") {
       // 不计入订单费用/毛利，只累计便于核对
       const amt = line.expense || line.income;
-      totals.adExpense += amt;
+      totals.adExpense = addMoney(totals.adExpense, amt);
     } else if (kind === "withdraw") {
       // 提现=钱拿出去，不是经营支出，不进 otherFee / 毛利
       const amt = line.expense || line.income;
-      totals.withdraw += amt;
+      totals.withdraw = addMoney(totals.withdraw, amt);
     } else {
       // other: net effect
       const net = line.income - line.expense;
       if (net < 0) {
-        agg.otherFee += -net;
-        totals.otherFee += -net;
+        agg.otherFee = addMoney(agg.otherFee, -net);
+        totals.otherFee = addMoney(totals.otherFee, -net);
       } else if (net > 0) {
-        agg.subsidy += net;
-        totals.subsidy += net;
+        agg.subsidy = addMoney(agg.subsidy, net);
+        totals.subsidy = addMoney(totals.subsidy, net);
       }
     }
     agg.lines += 1;
-    byOrder.set(orderId, agg);
+    byOrder.set(orderKey, agg);
   }
 
   for (const agg of byOrder.values()) {
     const techNet = Math.max(0, agg.techFee - agg.techFeeRefund);
     agg.techFee = techNet;
-    agg.net = agg.income - agg.refund - techNet - agg.otherFee + agg.subsidy;
+    agg.net = roundMoney(
+      agg.income - agg.refund - techNet - agg.otherFee + agg.subsidy,
+    );
   }
   const techNetTotal = Math.max(0, totals.techFee - totals.techFeeRefund);
   totals.techFee = techNetTotal;
-  totals.net =
-    totals.income - totals.refund - techNetTotal - totals.otherFee + totals.subsidy;
+  totals.net = roundMoney(
+    totals.income -
+      totals.refund -
+      techNetTotal -
+      totals.otherFee +
+      totals.subsidy,
+  );
 
   return { byOrder, byType, totals };
 }
@@ -421,6 +438,39 @@ export function billRecordFromPdd(fileData: FileData, lines: PddBillLine[]): Bil
     netAmount: totals.net,
     rawData: [wideHeader, ...wideRows],
   };
+}
+
+/**
+ * 月度汇总必须按流水发生月归属。跨月文件拆成多条记录，避免整份文件
+ * 被首日日期归入同一个月份；单月文件保持原有一条记录行为。
+ */
+export function billRecordsFromPdd(
+  fileData: FileData,
+  lines: PddBillLine[],
+): BillRecord[] {
+  const byMonth = new Map<string, PddBillLine[]>();
+  for (const line of lines) {
+    const match = String(line.time || "").match(
+      /(\d{4})[-/年.](\d{1,2})/,
+    );
+    const month = match
+      ? `${match[1]}-${String(match[2]).padStart(2, "0")}`
+      : "未知账期";
+    const rows = byMonth.get(month) || [];
+    rows.push(line);
+    byMonth.set(month, rows);
+  }
+  if (byMonth.size <= 1) return [billRecordFromPdd(fileData, lines)];
+  return Array.from(byMonth.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, monthLines]) => {
+      const record = billRecordFromPdd(fileData, monthLines);
+      return {
+        ...record,
+        fileName: `${fileData.name} · ${month}`,
+        sourceName: fileData.name,
+      };
+    });
 }
 
 export function parseProductMaster(fileData: FileData): ProductSku[] {

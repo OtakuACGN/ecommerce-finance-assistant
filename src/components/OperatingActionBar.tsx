@@ -5,6 +5,8 @@ import type { ProductMasterBuildMode } from "../services/pddBusiness";
 export interface OperatingActionBarProps {
   opReport: OperatingReport | null;
   opOrdersLen: number;
+  hasWorkspaceData: boolean;
+  reportBusy?: boolean;
   productMasterMeta: ProductMasterMeta;
   onBuildReport: () => void;
   onExportOperating: () => void;
@@ -15,6 +17,8 @@ export interface OperatingActionBarProps {
   onExportProductMaster: (mode: ProductMasterBuildMode) => void;
   onExportCostSettings: () => void;
   onImportCostSettings: () => void;
+  onExportWorkspace: () => void;
+  onImportWorkspace: () => void;
   onJumpUnmatched: () => void;
 }
 
@@ -22,6 +26,8 @@ export interface OperatingActionBarProps {
 export default function OperatingActionBar({
   opReport,
   opOrdersLen,
+  hasWorkspaceData,
+  reportBusy = false,
   productMasterMeta,
   onBuildReport,
   onExportOperating,
@@ -32,6 +38,8 @@ export default function OperatingActionBar({
   onExportProductMaster,
   onExportCostSettings,
   onImportCostSettings,
+  onExportWorkspace,
+  onImportWorkspace,
   onJumpUnmatched,
 }: OperatingActionBarProps) {
   const unmatchedN = opReport?.unmatchedSkus?.length || 0;
@@ -86,84 +94,126 @@ export default function OperatingActionBar({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5">
-        <button
-          type="button"
-          onClick={onBuildReport}
-          className="btn-primary px-4 py-2"
-        >
-          生成经营报表
-        </button>
-        <button
-          type="button"
-          onClick={onExportOperating}
-          disabled={!opReport}
-          className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-40"
-        >
-          导出 Excel
-        </button>
-        <button
-          type="button"
-          onClick={onExportAnomalies}
-          disabled={!opReport}
-          className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-sm font-medium hover:bg-rose-100 disabled:opacity-40"
-        >
-          导出异常订单
-        </button>
-        <button
-          type="button"
-          onClick={onCopyUnmatchedSkus}
-          disabled={!opReport || unmatchedN === 0}
-          className="px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100 disabled:opacity-40"
-        >
-          复制待补SKU
-        </button>
-        <button
-          type="button"
-          onClick={onCopyBossOnePager}
-          disabled={!opReport}
-          className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm font-medium hover:bg-slate-900 disabled:opacity-40"
-        >
-          复制老板一页纸
-        </button>
-        <button
-          type="button"
-          onClick={onCopyBossOnePagerTsv}
-          disabled={!opReport}
-          className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-sm hover:bg-slate-50 disabled:opacity-40"
-        >
-          复制一页纸表格
-        </button>
-        <button
-          type="button"
-          onClick={() => onExportProductMaster("all")}
-          disabled={opOrdersLen === 0}
-          className="px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-sm font-medium hover:bg-violet-100 disabled:opacity-40"
-        >
-          生成商品资料
-        </button>
-        <button
-          type="button"
-          onClick={() => onExportProductMaster("missing_cost")}
-          disabled={opOrdersLen === 0}
-          className="px-3 py-2 rounded-xl border border-violet-200 bg-white text-violet-700 text-sm hover:bg-violet-50 disabled:opacity-40"
-        >
-          待补商品资料
-        </button>
-        <button
-          type="button"
-          onClick={onExportCostSettings}
-          className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 text-sm hover:bg-slate-50"
-        >
-          导出参数JSON
-        </button>
-        <button
-          type="button"
-          onClick={onImportCostSettings}
-          className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 text-sm hover:bg-slate-50"
-        >
-          导入参数JSON
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onBuildReport}
+            disabled={reportBusy}
+            className="btn-primary px-4 py-2"
+          >
+            {reportBusy ? "正在后台计算…" : "生成经营报表"}
+          </button>
+          <button
+            type="button"
+            onClick={onExportOperating}
+            disabled={!opReport}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+          >
+            导出 Excel
+          </button>
+          <button
+            type="button"
+            onClick={onExportAnomalies}
+            disabled={!opReport}
+            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-40"
+          >
+            导出异常
+          </button>
+          <button
+            type="button"
+            onClick={onCopyUnmatchedSkus}
+            disabled={!opReport || unmatchedN === 0}
+            className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-40"
+          >
+            复制待补 SKU
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center rounded-xl border border-teal-200 bg-white p-0.5">
+            <button
+              type="button"
+              onClick={onExportWorkspace}
+              disabled={!hasWorkspaceData}
+              className="rounded-lg bg-teal-50 px-3 py-1.5 text-sm font-medium text-teal-800 hover:bg-teal-100 disabled:opacity-40"
+              title="备份订单、账务、商品、推广和经营参数"
+            >
+              备份工作区
+            </button>
+            <button
+              type="button"
+              onClick={onImportWorkspace}
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-teal-800 hover:bg-teal-50"
+              title="恢复工作区并按当前版本重新计算报表"
+            >
+              恢复
+            </button>
+          </div>
+
+          <details className="group relative">
+            <summary className="cursor-pointer list-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              更多工具
+              <span className="ml-1 inline-block text-slate-400 transition-transform group-open:rotate-180" aria-hidden>
+                ▾
+              </span>
+            </summary>
+            <div className="absolute right-0 top-[calc(100%+0.5rem)] z-40 grid min-w-[22rem] grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
+              <div className="col-span-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                汇报与商品资料
+              </div>
+              <button
+                type="button"
+                onClick={onCopyBossOnePager}
+                disabled={!opReport}
+                className="rounded-lg bg-slate-800 px-3 py-2 text-left text-sm text-white hover:bg-slate-900 disabled:opacity-40"
+              >
+                复制老板一页纸
+              </button>
+              <button
+                type="button"
+                onClick={onCopyBossOnePagerTsv}
+                disabled={!opReport}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              >
+                复制一页纸表格
+              </button>
+              <button
+                type="button"
+                onClick={() => onExportProductMaster("all")}
+                disabled={opOrdersLen === 0}
+                className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-left text-sm text-violet-700 hover:bg-violet-100 disabled:opacity-40"
+              >
+                生成全部商品资料
+              </button>
+              <button
+                type="button"
+                onClick={() => onExportProductMaster("missing_cost")}
+                disabled={opOrdersLen === 0}
+                className="rounded-lg border border-violet-200 px-3 py-2 text-left text-sm text-violet-700 hover:bg-violet-50 disabled:opacity-40"
+              >
+                导出待补商品资料
+              </button>
+              <div className="col-span-2 mt-1 border-t border-slate-100 pt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                经营参数
+              </div>
+              <button
+                type="button"
+                onClick={onExportCostSettings}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
+              >
+                导出参数 JSON
+              </button>
+              <button
+                type="button"
+                onClick={onImportCostSettings}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
+              >
+                导入参数 JSON
+              </button>
+            </div>
+          </details>
+        </div>
       </div>
     </div>
   );

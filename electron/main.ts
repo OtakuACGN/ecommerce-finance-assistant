@@ -1,4 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  Menu,
+  type IpcMainInvokeEvent,
+} from 'electron'
 import path from 'path'
 import fs from 'fs'
 
@@ -11,6 +18,31 @@ process.on('unhandledRejection', (reason) => {
 })
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
+const trustedWebContentsIds = new Set<number>()
+const readablePaths = new Set<string>()
+const writablePaths = new Set<string>()
+const readableExtensions = new Set(['.csv', '.xlsx', '.xls', '.json'])
+const writableExtensions = new Set(['.csv', '.xlsx', '.json'])
+
+function normalizedPath(filePath: string) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('文件路径为空')
+  }
+  const resolved = path.resolve(filePath)
+  return process.platform === 'win32' ? resolved.toLocaleLowerCase() : resolved
+}
+
+function assertTrustedSender(event: IpcMainInvokeEvent) {
+  if (!trustedWebContentsIds.has(event.sender.id)) {
+    throw new Error('拒绝未授权的窗口请求')
+  }
+}
+
+function assertAllowedExtension(filePath: string, allowed: Set<string>) {
+  if (!allowed.has(path.extname(filePath).toLocaleLowerCase())) {
+    throw new Error('不支持的文件类型')
+  }
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -25,10 +57,18 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
     },
     title: '店财通',
     icon: path.join(__dirname, '../public/icon.png'),
+  })
+  const trustedId = win.webContents.id
+  trustedWebContentsIds.add(trustedId)
+  win.on('closed', () => trustedWebContentsIds.delete(trustedId))
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, targetUrl) => {
+    if (targetUrl !== win.webContents.getURL()) event.preventDefault()
   })
 
   // 精简菜单（保留复制粘贴）
@@ -82,19 +122,24 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-ipcMain.handle('dialog:openFile', async () => {
+ipcMain.handle('dialog:openFile', async (event) => {
+  assertTrustedSender(event)
   const result = await dialog.showOpenDialog({
     title: '导入数据文件',
     properties: ['openFile', 'multiSelections'],
     filters: [
       { name: '数据文件', extensions: ['csv', 'xlsx', 'xls', 'json'] },
-      { name: '所有文件', extensions: ['*'] },
     ],
   })
+  for (const filePath of result.filePaths) {
+    assertAllowedExtension(filePath, readableExtensions)
+    readablePaths.add(normalizedPath(filePath))
+  }
   return result
 })
 
-ipcMain.handle('dialog:saveFile', async (_, defaultName: string) => {
+ipcMain.handle('dialog:saveFile', async (event, defaultName: string) => {
+  assertTrustedSender(event)
   const ext = String(defaultName || '')
     .split('.')
     .pop()
@@ -103,31 +148,47 @@ ipcMain.handle('dialog:saveFile', async (_, defaultName: string) => {
     ext === 'json'
       ? [
           { name: 'JSON 文件', extensions: ['json'] },
-          { name: '所有文件', extensions: ['*'] },
         ]
       : ext === 'csv'
         ? [
             { name: 'CSV 文件', extensions: ['csv'] },
             { name: 'Excel 文件', extensions: ['xlsx'] },
-            { name: '所有文件', extensions: ['*'] },
           ]
         : [
             { name: 'Excel 文件', extensions: ['xlsx'] },
             { name: 'CSV 文件', extensions: ['csv'] },
             { name: 'JSON 文件', extensions: ['json'] },
-            { name: '所有文件', extensions: ['*'] },
           ]
   const result = await dialog.showSaveDialog({
     title: '导出文件',
     defaultPath: defaultName,
     filters,
   })
+  if (!result.canceled && result.filePath) {
+    assertAllowedExtension(result.filePath, writableExtensions)
+    writablePaths.add(normalizedPath(result.filePath))
+  }
   return result
 })
 
-ipcMain.handle('file:read', async (_, filePath: string) => {
+ipcMain.handle(
+  'file:authorizeDropped',
+  async (event, filePath: string) => {
+    assertTrustedSender(event)
+    assertAllowedExtension(filePath, readableExtensions)
+    readablePaths.add(normalizedPath(filePath))
+    return filePath
+  },
+)
+
+ipcMain.handle('file:read', async (event, filePath: string) => {
   try {
-    const buffer = fs.readFileSync(filePath)
+    assertTrustedSender(event)
+    assertAllowedExtension(filePath, readableExtensions)
+    if (!readablePaths.has(normalizedPath(filePath))) {
+      throw new Error('请先通过“选择文件”或拖放授权读取该文件')
+    }
+    const buffer = await fs.promises.readFile(filePath)
     return {
       success: true,
       buffer: buffer.buffer.slice(
@@ -140,13 +201,18 @@ ipcMain.handle('file:read', async (_, filePath: string) => {
   }
 })
 
-ipcMain.handle('file:write', async (_, filePath: string, data: string | ArrayBuffer | Uint8Array | number[]) => {
+ipcMain.handle('file:write', async (event, filePath: string, data: string | ArrayBuffer | Uint8Array | number[]) => {
   try {
+    assertTrustedSender(event)
+    assertAllowedExtension(filePath, writableExtensions)
+    if (!writablePaths.has(normalizedPath(filePath))) {
+      throw new Error('请先通过“保存文件”选择写入位置')
+    }
     if (data == null) {
       return { success: false, error: '写入数据为空' }
     }
     if (typeof data === 'string') {
-      fs.writeFileSync(filePath, data, 'utf8')
+      await fs.promises.writeFile(filePath, data, 'utf8')
       return { success: true, bytes: Buffer.byteLength(data, 'utf8') }
     }
     let buf: Buffer
@@ -160,7 +226,7 @@ ipcMain.handle('file:write', async (_, filePath: string, data: string | ArrayBuf
     if (!buf.length) {
       return { success: false, error: '写入数据长度为 0（可能是导出序列化失败）' }
     }
-    fs.writeFileSync(filePath, buf)
+    await fs.promises.writeFile(filePath, buf)
     return { success: true, bytes: buf.length }
   } catch (error: any) {
     return { success: false, error: error.message }

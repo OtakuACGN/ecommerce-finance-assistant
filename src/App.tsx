@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import DataTable from "./components/DataTable";
 import Toast, { ToastMessage } from "./components/Toast";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -27,6 +27,7 @@ import {
   hasElectronAPI,
   openDataFiles,
   saveDataFile,
+  getDroppedFilePath,
   readLocalFile,
   writeLocalFile,
 } from "./utils/desktop";
@@ -46,7 +47,6 @@ import {
   PddOrder,
   ProductSku,
   ProductMasterBuildMode,
-  buildOperatingReport,
   buildProductMasterFromOrders,
   productMasterImportTable,
   productMasterWorkTable,
@@ -56,9 +56,10 @@ import {
   formatBossOnePagerText,
   guessShopNameFromFile,
   ingestForOperating,
-  billRecordFromPdd,
+  billRecordsFromPdd,
   normalizeShopName,
   sourceKindLabel,
+  replaceImportedAdDailySource,
   replaceImportedBillSource,
 } from "./services/pddBusiness";
 import {
@@ -78,7 +79,7 @@ import {
   analyzeProductMasterState,
   type ProductMasterMeta,
 } from "./services/productMasterMeta";
-import { replaceBillRecordSource } from "./services/billRecords";
+import { replaceBillRecordSources } from "./services/billRecords";
 import OperatingActionBar from "./components/OperatingActionBar";
 import { useBillRefundHandlers } from "./hooks/useBillRefundHandlers";
 import { useMappingReconcileHandlers } from "./hooks/useMappingReconcileHandlers";
@@ -89,6 +90,13 @@ import {
   formatOpOrdersPeriod,
   uniqueShopNames,
 } from "./utils/opPeriod";
+import {
+  createOperatingWorkspace,
+  operatingWorkspaceSummary,
+  parseOperatingWorkspace,
+} from "./services/operatingWorkspace";
+import { buildOperatingReportAsync } from "./services/operatingReportRunner";
+import packageInfo from "../package.json";
 
 type Tab = AppTab;
 
@@ -120,6 +128,8 @@ function App() {
   const [opAds, setOpAds] = useState<AdDay[]>([]);
   const [opAdProducts, setOpAdProducts] = useState<AdProduct[]>([]);
   const [opReport, setOpReport] = useState<OperatingReport | null>(null);
+  const [opReportBusy, setOpReportBusy] = useState(false);
+  const reportInputVersionRef = useRef(0);
   const [opSources, setOpSources] = useState<
     { kind: string; name: string; rows: number; shop?: string }[]
   >([]);
@@ -259,9 +269,14 @@ function App() {
   const pushOpSource = useCallback(
     (kind: string, name: string, rows: number, shop?: string) => {
       setOpSources((prev) => {
-        // 同类型+同店铺覆盖；不同类型可并存
+        // 同类型+同店铺+同文件覆盖；同店铺的分月/分段文件可并存
         const others = prev.filter(
-          (s) => !(s.kind === kind && (s.shop || "") === (shop || "")),
+          (s) =>
+            !(
+              s.kind === kind &&
+              (s.shop || "") === (shop || "") &&
+              s.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+            ),
         );
         return [...others, { kind, name, rows, shop }];
       });
@@ -290,6 +305,28 @@ function App() {
       let localBill = opBillLines.slice();
       let localAds = opAds.slice();
       let localAdProducts = opAdProducts.slice();
+      let localSources = opSources.slice();
+      let localBillRecords = billRecords.slice();
+      let localSkuMappings = skuMappings.slice();
+      let nextProductMasterMeta: ProductMasterMeta | null = null;
+      const upsertLocalSource = (
+        kind: string,
+        name: string,
+        rows: number,
+        shop?: string,
+      ) => {
+        localSources = [
+          ...localSources.filter(
+            (source) =>
+              !(
+                source.kind === kind &&
+                (source.shop || "") === (shop || "") &&
+                source.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+              ),
+          ),
+          { kind, name, rows, shop },
+        ];
+      };
 
       const askOrderConflict = (payload: {
         shop: string;
@@ -306,7 +343,10 @@ function App() {
               setConfirmDialog(null);
               resolve("merge");
             },
-            onCancel: () => resolve("skip"),
+            onCancel: () => {
+              setConfirmDialog(null);
+              resolve("skip");
+            },
             cancelLabel: "取消/跳过",
             confirmLabel: "合并(同单覆盖)",
             actions: [
@@ -416,7 +456,7 @@ function App() {
               for (const o of stamped) map.set(orderKey(o), o);
               localOrders = Array.from(map.values());
             }
-            pushOpSource(kind, fileData.name, stamped.length, shop);
+            upsertLocalSource(kind, fileData.name, stamped.length, shop);
             stats.orders += stamped.length;
           } else if (kind === "pdd_bill") {
             const stamped = ingested.billLines;
@@ -426,18 +466,19 @@ function App() {
               shop,
               fileData.name,
             );
-            if (ingested.billRecord) {
-              const operatingBillRecord = {
-                ...ingested.billRecord,
-                fileName: `${shop} · ${ingested.billRecord.fileName}`,
+            if (ingested.billRecords?.length) {
+              const operatingBillRecords = ingested.billRecords.map((record) => ({
+                ...record,
+                fileName: `${shop} · ${record.fileName}`,
                 sourceName: fileData.name,
                 shopName: shop,
-              };
-              setBillRecords((prev) =>
-                replaceBillRecordSource(prev, operatingBillRecord),
+              }));
+              localBillRecords = replaceBillRecordSources(
+                localBillRecords,
+                operatingBillRecords,
               );
             }
-            pushOpSource(kind, fileData.name, stamped.length, shop);
+            upsertLocalSource(kind, fileData.name, stamped.length, shop);
             stats.bill += stamped.length;
           } else if (kind === "product_master") {
             const incoming = ingested.products;
@@ -446,10 +487,10 @@ function App() {
             } else {
               localProducts = incoming;
             }
-            setSkuMappings(productsToSkuMappings(localProducts));
-            pushOpSource(kind, fileData.name, localProducts.length, shop);
+            localSkuMappings = productsToSkuMappings(localProducts);
+            upsertLocalSource(kind, fileData.name, localProducts.length, shop);
             const pending = countPendingCostProducts(localProducts);
-            setProductMasterMeta({
+            nextProductMasterMeta = {
               lastFileName: fileData.name,
               lastImportedAt: new Date().toLocaleString("zh-CN"),
               lastExportedAt: productMasterMeta.lastExportedAt,
@@ -457,21 +498,24 @@ function App() {
               pendingFillCount: pending,
               totalCount: localProducts.length,
               step: 3,
-            });
+            };
             stats.products += incoming.length;
             stats.productPending = pending;
             stats.productTotal = localProducts.length;
           } else if (kind === "ad_daily") {
-            const stamped = ingested.adDays.map((d) => ({
-              ...d,
-              shopName: shop,
-            }));
-            localAds = [
-              ...localAds.filter((d) => normalizeShopName(d.shopName) !== shop),
-              ...stamped,
-            ];
-            pushOpSource(kind, fileData.name, stamped.length, shop);
-            stats.ads += stamped.length;
+            localAds = replaceImportedAdDailySource(
+              localAds,
+              ingested.adDays,
+              shop,
+              fileData.name,
+            );
+            upsertLocalSource(
+              kind,
+              fileData.name,
+              ingested.adDays.length,
+              shop,
+            );
+            stats.ads += ingested.adDays.length;
           } else if (kind === "ad_product") {
             const stamped = (ingested.adProducts || []).map((a) => ({
               ...a,
@@ -489,7 +533,7 @@ function App() {
               map.set(a.productId || `name:${a.productName}`, a);
             }
             localAdProducts = [...others, ...Array.from(map.values())];
-            pushOpSource(kind, fileData.name, stamped.length, shop);
+            upsertLocalSource(kind, fileData.name, stamped.length, shop);
             stats.adProducts += stamped.length;
           } else {
             stats.unknown += 1;
@@ -504,6 +548,12 @@ function App() {
         setOpBillLines(localBill);
         setOpAds(localAds);
         setOpAdProducts(localAdProducts);
+        setOpSources(localSources);
+        setBillRecords(localBillRecords);
+        setSkuMappings(localSkuMappings);
+        if (nextProductMasterMeta) {
+          setProductMasterMeta(nextProductMasterMeta);
+        }
         setOpReport(null);
         const parts = [
           stats.orders ? `订单${stats.orders}单` : "",
@@ -598,10 +648,12 @@ function App() {
       opBillLines,
       opAds,
       opAdProducts,
+      opSources,
+      billRecords,
+      skuMappings,
       opShopLabel,
       productImportMode,
       productMasterMeta.lastExportedAt,
-      pushOpSource,
       reportError,
       showToast,
     ],
@@ -630,9 +682,9 @@ function App() {
         return;
       }
       const files = Array.from(e.dataTransfer.files || []);
-      const paths = files
-        .map((f) => (f as File & { path?: string }).path || "")
-        .filter(Boolean);
+      const paths = (
+        await Promise.all(files.map((file) => getDroppedFilePath(file)))
+      ).filter(Boolean);
       if (!paths.length) {
         showToast(
           "未拿到本地路径。请用「选择文件」或在桌面应用窗口内拖入",
@@ -728,6 +780,159 @@ function App() {
     }
   }, [reportError, showToast]);
 
+  const handleExportOperatingWorkspace = useCallback(async () => {
+    const totalRows =
+      opOrders.length +
+      opBillLines.length +
+      opProducts.length +
+      opAds.length +
+      opAdProducts.length;
+    if (totalRows === 0) {
+      showToast("当前没有可备份的经营分析数据", "warning");
+      return;
+    }
+    try {
+      const defaultName = `店财通工作区_${new Date().toISOString().slice(0, 10)}.json`;
+      const result = await saveDataFile(defaultName);
+      if (result.canceled || !result.filePath) return;
+      const workspace = createOperatingWorkspace({
+        appVersion: packageInfo.version,
+        shopLabel: opShopLabel,
+        productImportMode,
+        sources: opSources,
+        costSettings: opCostSettings,
+        orders: opOrders,
+        billLines: opBillLines,
+        products: opProducts,
+        ads: opAds,
+        adProducts: opAdProducts,
+        skuMappings,
+      });
+      const written = await writeLocalFile(
+        result.filePath,
+        JSON.stringify(workspace, null, 2),
+      );
+      if (!written.success) {
+        throw new Error(written.error || "写入工作区文件失败");
+      }
+      showToast(
+        `工作区已备份：${operatingWorkspaceSummary(workspace)}`,
+        "success",
+      );
+    } catch (error) {
+      reportError("备份经营分析工作区", error);
+    }
+  }, [
+    opOrders,
+    opBillLines,
+    opProducts,
+    opAds,
+    opAdProducts,
+    skuMappings,
+    opShopLabel,
+    productImportMode,
+    opSources,
+    opCostSettings,
+    reportError,
+    showToast,
+  ]);
+
+  const handleImportOperatingWorkspace = useCallback(async () => {
+    try {
+      const result = await openDataFiles();
+      if (result.canceled || !result.filePaths.length) return;
+      const filePath = result.filePaths[0];
+      if (!/\.json$/i.test(filePath)) {
+        showToast("请选择 .json 工作区文件", "warning");
+        return;
+      }
+      const read = await readLocalFile(filePath);
+      if (!read.success || !read.buffer) {
+        throw new Error(read.error || "读取工作区文件失败");
+      }
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(read.buffer);
+      const workspace = parseOperatingWorkspace(JSON.parse(text));
+      const summary = operatingWorkspaceSummary(workspace);
+      const exportedAt = workspace.exportedAt
+        ? new Date(workspace.exportedAt).toLocaleString("zh-CN")
+        : "未知时间";
+
+      const applyWorkspace = async () => {
+        try {
+          setOpReportBusy(true);
+          const data = workspace.data;
+          const hasData =
+            data.orders.length +
+              data.billLines.length +
+              data.products.length +
+              data.ads.length +
+              data.adProducts.length >
+            0;
+          const report = hasData
+            ? await buildOperatingReportAsync({
+                orders: data.orders,
+                billLines: data.billLines,
+                products: data.products,
+                ads: data.ads,
+                settings: workspace.costSettings,
+                adProducts: data.adProducts,
+              })
+            : null;
+          const restoredMappings =
+            data.skuMappings.length > 0
+              ? data.skuMappings
+              : productsToSkuMappings(data.products);
+          const restoredProductMeta: ProductMasterMeta = {
+            lastFileName: "工作区恢复",
+            lastImportedAt: new Date().toLocaleString("zh-CN"),
+            lastExportedAt: "",
+            lastMode: workspace.productImportMode,
+            pendingFillCount: countPendingCostProducts(data.products),
+            totalCount: data.products.length,
+            step: data.products.length > 0 ? 3 : data.orders.length > 0 ? 1 : 0,
+          };
+          setOpOrders(data.orders);
+          setOpBillLines(data.billLines);
+          setOpProducts(data.products);
+          setOpAds(data.ads);
+          setOpAdProducts(data.adProducts);
+          setOpSources(workspace.sources);
+          setOpShopLabel(workspace.shopLabel);
+          setProductImportMode(workspace.productImportMode);
+          setOpCostSettings(workspace.costSettings);
+          setSkuMappings(restoredMappings);
+          setProductMasterMeta(restoredProductMeta);
+          setOpReport(report);
+          setOpView("summary");
+          setOrderTableFilter("all");
+          setCurrentData(report?.summaryTable || []);
+          setCurrentHeaders(report?.summaryTable?.[0] || []);
+          setConfirmDialog(null);
+          showToast(`工作区已恢复并按当前版本重算：${summary}`, "success");
+        } catch (error) {
+          setConfirmDialog(null);
+          reportError("恢复经营分析工作区", error);
+        } finally {
+          setOpReportBusy(false);
+        }
+      };
+
+      setConfirmDialog({
+        title: "恢复经营分析工作区",
+        message:
+          `${summary}\n导出时间：${exportedAt} · 应用版本：${workspace.appVersion}\n` +
+          "恢复会替换当前经营分析数据，并按当前版本重新生成报表。",
+        onConfirm: applyWorkspace,
+        onCancel: () => setConfirmDialog(null),
+        cancelLabel: "取消",
+        confirmLabel: "恢复并重算",
+        confirmClassName: "bg-teal-600 hover:bg-teal-700",
+      });
+    } catch (error) {
+      reportError("读取经营分析工作区", error);
+    }
+  }, [reportError, showToast]);
+
   const handleExportAnomalies = useCallback(async () => {
     if (!opReport) {
       showToast("请先生成经营报表", "error");
@@ -772,7 +977,8 @@ function App() {
     }
   }, [opReport, reportError, showToast]);
 
-  const handleBuildOperatingReport = useCallback((nextView: typeof opView = "summary") => {
+  const handleBuildOperatingReport = useCallback(async (nextView: typeof opView = "summary") => {
+    if (opReportBusy) return;
     if (
       opOrders.length === 0 &&
       opBillLines.length === 0 &&
@@ -783,14 +989,28 @@ function App() {
       showToast("请先导入至少一种数据（订单/账务/商品/推广）", "error");
       return;
     }
-    const report = buildOperatingReport(
-      opOrders,
-      opBillLines,
-      opProducts,
-      opAds,
-      opCostSettings,
-      opAdProducts,
-    );
+    setOpReportBusy(true);
+    const inputVersion = reportInputVersionRef.current;
+    let report: OperatingReport;
+    try {
+      report = await buildOperatingReportAsync({
+        orders: opOrders,
+        billLines: opBillLines,
+        products: opProducts,
+        ads: opAds,
+        settings: opCostSettings,
+        adProducts: opAdProducts,
+      });
+    } catch (error) {
+      reportError("生成经营报表", error);
+      return;
+    } finally {
+      setOpReportBusy(false);
+    }
+    if (inputVersion !== reportInputVersionRef.current) {
+      showToast("计算期间数据或参数已变化，本次旧结果已丢弃，请重新生成", "warning");
+      return;
+    }
     setOpReport(report);
     const view = nextView || "summary";
     setOpView(view);
@@ -839,6 +1059,9 @@ function App() {
     const bp = opCostSettings.brandPointPct || 0;
     const tech = report.summary.techFee || 0;
     let msg = `报表已生成：自然月利润(扣广告/估算运费) ¥${report.summary.estimatedProfitAfterAd.toFixed(2)} | 未扣运费 ¥${report.summary.profitAfterAdBeforeShipping.toFixed(2)} | 确认收入 ¥${(report.summary.confirmedRevenue ?? 0).toFixed(0)} | 全额退${fullN}/部分退${partialN} | 待补SKU ${pendingSku}`;
+    if (report.summary.billCoverageWarning) {
+      msg += " | ⚠账务覆盖不足，已按设置处理";
+    }
     if (bp <= 0 && tech > 0) {
       msg += " | 平台费已扣、品牌扣点未填(可选)";
     } else if (bp > 0) {
@@ -887,7 +1110,18 @@ function App() {
         ],
       });
     }
-  }, [opOrders, opBillLines, opProducts, opAds, opAdProducts, opCostSettings, showToast]);
+  }, [opOrders, opBillLines, opProducts, opAds, opAdProducts, opCostSettings, opReportBusy, reportError, showToast]);
+
+  useEffect(() => {
+    reportInputVersionRef.current += 1;
+  }, [
+    opOrders,
+    opBillLines,
+    opProducts,
+    opAds,
+    opAdProducts,
+    opCostSettings,
+  ]);
 
   const handleShowOperatingView = useCallback(
     (view: typeof opView, rankSort: "profit" | "loss" = opRankSort) => {
@@ -1311,7 +1545,7 @@ function App() {
       showToast("请先在经营分析导入账务明细", "warning");
       return;
     }
-    const record = billRecordFromPdd(
+    const records = billRecordsFromPdd(
       {
         name: "经营分析账务",
         path: "",
@@ -1320,9 +1554,14 @@ function App() {
       },
       opBillLines,
     );
-    setBillRecords((prev) => replaceBillRecordSource(prev, record));
+    setBillRecords((prev) => replaceBillRecordSources(prev, records));
+    const periods = records.map((record) => record.date).join(" / ");
+    const orderCount = records.reduce(
+      (sum, record) => sum + record.orderCount,
+      0,
+    );
     showToast(
-      `已从经营分析同步账务：${opBillLines.length} 行 · ${record.date} · ${record.orderCount} 单`,
+      `已从经营分析同步账务：${opBillLines.length} 行 · ${periods} · ${orderCount} 单`,
       "success",
     );
   }, [opBillLines, showToast]);
@@ -1379,6 +1618,9 @@ const {
 
   return (
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">
+        跳到主要内容
+      </a>
       {runtimeNotice && (
         <div
           className={`px-4 py-2 text-sm border-b ${desktopReady ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-800 border-amber-200"}`}
@@ -1389,7 +1631,7 @@ const {
 
       <AppNav activeTab={activeTab} onChange={setActiveTab} />
 
-
+      <main id="main-content" className="contents" tabIndex={-1}>
 
       {/* ========== 经营分析（拼多多四表） ========== */}
       {activeTab === "operating" && (
@@ -1490,6 +1732,15 @@ const {
               <OperatingActionBar
                 opReport={opReport}
                 opOrdersLen={opOrders.length}
+                hasWorkspaceData={
+                  opOrders.length +
+                    opBillLines.length +
+                    opProducts.length +
+                    opAds.length +
+                    opAdProducts.length >
+                  0
+                }
+                reportBusy={opReportBusy}
                 productMasterMeta={productMasterMeta}
                 onBuildReport={() => handleBuildOperatingReport()}
                 onExportOperating={handleExportOperating}
@@ -1500,6 +1751,8 @@ const {
                 onExportProductMaster={(mode) => void handleExportProductMaster(mode)}
                 onExportCostSettings={handleExportCostSettings}
                 onImportCostSettings={handleImportCostSettings}
+                onExportWorkspace={handleExportOperatingWorkspace}
+                onImportWorkspace={handleImportOperatingWorkspace}
                 onJumpUnmatched={() => handleShowOperatingView("unmatched" as any)}
               />
 
@@ -1939,6 +2192,7 @@ const {
           desktopReady={desktopReady}
         />
       )}
+      </main>
 
       {/* 账单详情弹窗 */}
       <Toast toasts={toasts} onDismiss={dismissToast} />

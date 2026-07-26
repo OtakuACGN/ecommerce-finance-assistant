@@ -17,6 +17,10 @@ export async function saveDataFile(defaultName: string) {
   return getElectronAPI().saveFile(defaultName)
 }
 
+export async function getDroppedFilePath(file: File) {
+  return getElectronAPI().getDroppedFilePath(file)
+}
+
 export async function readLocalFile(filePath: string) {
   return getElectronAPI().readFile(filePath)
 }

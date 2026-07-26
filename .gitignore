@@ -3,6 +3,7 @@ dist/
 dist-electron/
 release/
 output/
+qa-install/
 *.log
 .DS_Store
 # temp agent/debug scripts

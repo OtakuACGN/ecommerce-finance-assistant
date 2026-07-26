@@ -10,6 +10,7 @@ interface Window {
       canceled: boolean
       filePath?: string
     }>
+    getDroppedFilePath: (file: File) => Promise<string>
     readFile: (filePath: string) => Promise<{
       success: boolean
       buffer?: ArrayBuffer

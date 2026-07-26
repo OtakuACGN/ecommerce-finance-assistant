@@ -320,7 +320,7 @@ function HBarList({
 
             <div
 
-              className="h-full rounded-full transition-all"
+              className="h-full rounded-full transition-[width]"
 
               style={{
 

@@ -44,6 +44,8 @@ export interface OperatingWorkspaceProps {
   onExportOperating: () => void | Promise<void>;
   onExportCostSettings: () => void | Promise<void>;
   onImportCostSettings: () => void | Promise<void>;
+  onExportWorkspace: () => void | Promise<void>;
+  onImportWorkspace: () => void | Promise<void>;
   onInvalidateReport: () => void;
   sourceKindLabel: (k: string) => string;
   opSettingsOpen: boolean;
@@ -140,6 +142,14 @@ export default function OperatingWorkspace(props: OperatingWorkspaceProps) {
             <OperatingActionBar
               opReport={p.opReport}
               opOrdersLen={p.opOrders.length}
+              hasWorkspaceData={
+                p.opOrders.length +
+                  p.opBillLines.length +
+                  p.opProducts.length +
+                  p.opAds.length +
+                  p.opAdProducts.length >
+                0
+              }
               productMasterMeta={p.productMasterMeta}
               onBuildReport={p.onBuildReport}
               onExportOperating={p.onExportOperating}
@@ -150,6 +160,8 @@ export default function OperatingWorkspace(props: OperatingWorkspaceProps) {
               onExportProductMaster={(mode) => void p.onExportProductMaster(mode)}
               onExportCostSettings={p.onExportCostSettings}
               onImportCostSettings={p.onImportCostSettings}
+              onExportWorkspace={p.onExportWorkspace}
+              onImportWorkspace={p.onImportWorkspace}
               onJumpUnmatched={p.onJumpUnmatched}
             />
 
