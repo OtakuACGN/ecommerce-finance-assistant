@@ -3,6 +3,7 @@
  */
 import type { PddOrder, ProductSku, CostSettings } from "./types";
 import { normMatchKey } from "./helpers";
+import { businessMonthOf } from "../businessPeriod";
 
 export function normalizeShopName(name?: string): string {
   const s = String(name || "").trim();
@@ -136,66 +137,7 @@ export function isShipNotDeal(o: PddOrder): boolean {
 }
 
 export function dealMonthOf(dealTime: string | number | Date | null | undefined): string {
-  if (dealTime === null || dealTime === undefined || dealTime === "") return "未知";
-
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const validYear = (y: number) => y >= 1990 && y <= 2100;
-  const fmt = (y: number, m: number) =>
-    m >= 1 && m <= 12 && validYear(y) ? `${y}-${pad(m)}` : "";
-
-  // Date 对象
-  if (dealTime instanceof Date && !Number.isNaN(dealTime.getTime())) {
-    const r = fmt(dealTime.getFullYear(), dealTime.getMonth() + 1);
-    if (r) return r;
-  }
-
-  // Excel 序列号（数字或纯数字字符串，约 1990–2100）
-  const asNum =
-    typeof dealTime === "number"
-      ? dealTime
-      : /^\d+(\.\d+)?$/.test(String(dealTime).trim())
-        ? Number(String(dealTime).trim())
-        : NaN;
-  if (Number.isFinite(asNum) && asNum > 20000 && asNum < 80000) {
-    // Excel 纪元 1899-12-30（含 1900 闰年兼容）
-    const utc = Date.UTC(1899, 11, 30) + Math.floor(asNum) * 86400000;
-    const d = new Date(utc);
-    const r = fmt(d.getUTCFullYear(), d.getUTCMonth() + 1);
-    if (r) return r;
-  }
-
-  const s = String(dealTime).trim();
-
-  // 标准：2026-06-30 / 2026/6/30 / 2026年6月…（年份必须 19xx/20xx，避免吃到订单号）
-  let m = s.match(/(?:^|[^\d])((?:19|20)\d{2})[-/年.](\d{1,2})(?!\d)/);
-  if (!m) m = s.match(/^((?:19|20)\d{2})[-/年.](\d{1,2})/);
-  if (m) {
-    const r = fmt(Number(m[1]), Number(m[2]));
-    if (r) return r;
-  }
-
-  // 6/30/26、06/30/2026、30/6/2026
-  m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/);
-  if (m) {
-    let year = Number(m[3]);
-    if (year < 100) year += year >= 70 ? 1900 : 2000;
-    const a = Number(m[1]);
-    const b = Number(m[2]);
-    // 美式优先 月/日/年；若首段>12 则 日/月/年
-    let month = a > 12 ? b : a;
-    if (a <= 12 && b > 12) month = a; // 6/30/26
-    if (a > 12 && b <= 12) month = b; // 30/6/26
-    const r = fmt(year, month);
-    if (r) return r;
-  }
-
-  // 最后才用 Date 解析，并校验年份，禁止 45474 / 订单号被当成年份
-  const d = new Date(s);
-  if (!Number.isNaN(d.getTime())) {
-    const r = fmt(d.getFullYear(), d.getMonth() + 1);
-    if (r) return r;
-  }
-  return "未知";
+  return businessMonthOf(dealTime) || "未知";
 }
 
 interface CostMatch {

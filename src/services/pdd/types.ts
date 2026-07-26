@@ -47,6 +47,8 @@ export interface PddBillLine {
   shopName?: string;
   /** 导入来源文件；用于同一文件重导时替换旧流水，避免重复记账 */
   sourceName?: string;
+  /** 原始文件内容指纹；文件改名后仍可识别为同一来源 */
+  sourceFingerprint?: string;
 }
 
 export interface PddBillOrderAgg {

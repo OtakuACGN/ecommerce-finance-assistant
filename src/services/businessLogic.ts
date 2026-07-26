@@ -1,10 +1,14 @@
 import { FileData } from "../utils/excel";
+import { normalizeIdentifier } from "../utils/identifier";
 import { applySkuMappingRows } from "./skuMapping";
+import { businessMonthOf, isSameBusinessMonth } from "./businessPeriod";
 
 export interface BillRecord {
   fileName: string;
   /** 原始导入来源名，用于同一来源重导替换 */
   sourceName?: string;
+  /** 原始文件内容指纹；文件改名后仍可识别为同一来源 */
+  sourceFingerprint?: string;
   shopName?: string;
   platform: string;
   date: string;
@@ -82,6 +86,19 @@ export function findCol(headers: string[], keywords: string[]): number {
   return -1;
 }
 
+function sumMoneyColumn(rows: any[][], column: number): number {
+  if (column < 0) return 0;
+  const cents = rows.reduce(
+    (sum, row) => sum + Math.round(findAmount([row[column]]) * 100),
+    0,
+  );
+  return cents / 100;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 export function parseBill(fileData: FileData): BillRecord {
   const headers = fileData.headers;
   const rows = fileData.data.slice(1);
@@ -139,37 +156,23 @@ export function parseBill(fileData: FileData): BillRecord {
     "date",
     "月份",
   ]);
-  const totalAmount =
-    amtCol >= 0
-      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[amtCol]])), 0)
-      : 0;
+  const totalAmount = sumMoneyColumn(rows, amtCol);
   const orderCount =
     cntCol >= 0
       ? rows.reduce((s, r) => s + parseInt(String(r[cntCol] || 0)), 0)
       : rows.length;
-  const commission =
-    commCol >= 0
-      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[commCol]])), 0)
-      : 0;
+  const commission = sumMoneyColumn(rows, commCol);
   const techFee =
     techCol >= 0 && techCol !== commCol
-      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[techCol]])), 0)
+      ? sumMoneyColumn(rows, techCol)
       : 0;
-  const subsidy =
-    subCol >= 0
-      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[subCol]])), 0)
-      : 0;
-  const refundAmount =
-    refundCol >= 0
-      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[refundCol]])), 0)
-      : 0;
-  const otherFee =
-    otherFeeCol >= 0
-      ? rows.reduce((s, r) => s + Math.abs(findAmount([r[otherFeeCol]])), 0)
-      : 0;
+  const subsidy = sumMoneyColumn(rows, subCol);
+  const refundAmount = sumMoneyColumn(rows, refundCol);
+  const otherFee = sumMoneyColumn(rows, otherFeeCol);
   return {
     fileName: fileData.name,
     sourceName: fileData.name,
+    sourceFingerprint: fileData.sourceFingerprint,
     platform,
     date: dateCol >= 0 ? String(rows[0]?.[dateCol] || "未知账期") : "未知账期",
     totalAmount,
@@ -179,8 +182,9 @@ export function parseBill(fileData: FileData): BillRecord {
     subsidy,
     refundAmount,
     otherFee,
-    netAmount:
+    netAmount: roundMoney(
       totalAmount - refundAmount - commission - techFee - otherFee + subsidy,
+    ),
     rawData: fileData.data,
   };
 }
@@ -200,7 +204,10 @@ export function parseCommissionDetails(fileData: FileData): CommissionDetail[] {
   const details: CommissionDetail[] = [];
 
   for (const row of rows) {
-    const orderId = orderIdCol >= 0 ? String(row[orderIdCol] || "").trim() : "";
+    const orderId =
+      orderIdCol >= 0
+        ? normalizeIdentifier(row[orderIdCol], "订单号")
+        : "";
     const platform = platformCol >= 0
       ? String(row[platformCol] || "").trim()
       : detectPlatform(fileData.name);
@@ -258,7 +265,7 @@ export function reconcilePayments(
         ) || 0
       : 0;
   const idOf = (row: any[], column: number) =>
-    column >= 0 ? String(row[column] ?? "").trim().replace(/\.0$/, "") : "";
+    column >= 0 ? normalizeIdentifier(row[column], "订单号") : "";
   const orderAmountCounts = new Map<number, number>();
   const paymentAmountCounts = new Map<number, number>();
   for (const row of orderRows) {
@@ -354,12 +361,11 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
       b.totalAmount > 0
         ? ((b.techFee / b.totalAmount) * 100).toFixed(2) + "%"
         : "0%";
-    const today = new Date();
-    const billDate = new Date(b.date);
-    const isCrossPeriod =
-      !isNaN(billDate.getTime()) &&
-      (billDate.getFullYear() !== today.getFullYear() ||
-        billDate.getMonth() !== today.getMonth());
+    const periodStatus = !businessMonthOf(b.date)
+      ? "⚠️账期未知"
+      : isSameBusinessMonth(b.date)
+        ? "当月"
+        : "⚠️跨期";
 
     return [
       b.platform,
@@ -374,7 +380,7 @@ export function generateAccrualTable(billRecords: BillRecord[]): any[][] {
       b.netAmount.toFixed(2),
       commRate,
       techRate,
-      isCrossPeriod ? "⚠️跨期" : "当月",
+      periodStatus,
     ];
   });
 

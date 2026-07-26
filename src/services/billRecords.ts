@@ -1,13 +1,49 @@
 import type { BillRecord } from "./businessLogic";
 import { normalizeShopName } from "./pdd/logistics";
+import { businessMonthOf } from "./businessPeriod";
 
-function billSourceKey(record: BillRecord): string {
+function billScopeKey(record: BillRecord): string {
   const platform = String(record.platform || "其他").trim().toLowerCase();
   const shop = normalizeShopName(record.shopName).toLowerCase();
+  return `${platform}||${shop}`;
+}
+
+function billNamePeriodKey(record: BillRecord): string {
   const source = String(record.sourceName || record.fileName || "")
     .trim()
     .toLowerCase();
-  return `${platform}||${shop}||${source}`;
+  const period = businessMonthOf(record.date);
+  return `${billScopeKey(record)}||${source}||${period}`;
+}
+
+function isSameImportSource(
+  existing: BillRecord,
+  incoming: BillRecord,
+): boolean {
+  const incomingFingerprint = String(incoming.sourceFingerprint || "").trim();
+  const existingFingerprint = String(existing.sourceFingerprint || "").trim();
+  if (
+    incomingFingerprint &&
+    existingFingerprint &&
+    incomingFingerprint === existingFingerprint
+  ) {
+    return true;
+  }
+  if (billScopeKey(existing) !== billScopeKey(incoming)) return false;
+
+  const existingKey = billNamePeriodKey(existing);
+  const incomingKey = billNamePeriodKey(incoming);
+  const existingPeriod = businessMonthOf(existing.date);
+  const incomingPeriod = businessMonthOf(incoming.date);
+  if (existingPeriod && incomingPeriod) return existingKey === incomingKey;
+
+  const existingName = String(existing.sourceName || existing.fileName || "")
+    .trim()
+    .toLowerCase();
+  const incomingName = String(incoming.sourceName || incoming.fileName || "")
+    .trim()
+    .toLowerCase();
+  return !!incomingName && existingName === incomingName;
 }
 
 /**
@@ -26,11 +62,10 @@ export function replaceBillRecordSources(
   incoming: BillRecord[],
 ): BillRecord[] {
   if (incoming.length === 0) return existing;
-  const incomingKeys = new Set(
-    incoming.map(billSourceKey).filter((key) => !key.endsWith("||")),
-  );
   return [
-    ...existing.filter((record) => !incomingKeys.has(billSourceKey(record))),
+    ...existing.filter(
+      (record) => !incoming.some((item) => isSameImportSource(record, item)),
+    ),
     ...incoming,
   ];
 }

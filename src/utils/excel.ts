@@ -5,7 +5,10 @@ export interface FileData {
   name: string
   path: string
   headers: string[]
-  data: any[][]
+  data: any[][]
+
+  /** 文件原始字节的 SHA-256；改名后仍可识别为同一来源 */
+  sourceFingerprint?: string
 }
 
 function detectAndDecodeBuffer(buffer: ArrayBuffer): string {
@@ -129,38 +132,56 @@ function isCSV(filePath: string): boolean {
   return /\.(csv|CSV)$/.test(filePath)
 }
 
-export async function processFile(filePath: string): Promise<FileData | null> {
+async function fingerprintBuffer(buffer: ArrayBuffer): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer)
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+/**
+ * 将文件字节解析为统一二维表。CSV 使用 raw 模式，确保长订单号不会被
+ * 自动转换成 IEEE-754 数字，前导零也能原样保留。
+ */
+export async function parseTabularBuffer(
+  filePath: string,
+  buffer: ArrayBuffer,
+): Promise<FileData> {
   const XLSX = await import("xlsx")
-  try {
+  let data: any[][]
+
+  if (isCSV(filePath)) {
+    const content = detectAndDecodeBuffer(buffer)
+    const workbook = XLSX.read(content, { type: "string", raw: true })
+    data = pickBestSheet(XLSX, workbook).rows
+  } else {
+    const workbook = XLSX.read(buffer, { type: "array" })
+    data = pickBestSheet(XLSX, workbook).rows
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error("文件中没有可读取的数据")
+  }
+
+  return {
+    name: getBaseName(filePath),
+    path: filePath,
+    headers: (data[0] || []).map((h: any) => String(h || "")),
+    data,
+    sourceFingerprint: await fingerprintBuffer(buffer),
+  }
+}
+
+export async function processFile(filePath: string): Promise<FileData | null> {
+  try {
     const result = await readLocalFile(filePath)
     if (!result.success || !result.buffer) {
       console.error("读取文件失败:", result.error)
       return null
     }
 
-    let data: any[][]
-    if (isCSV(filePath)) {
-      const content = detectAndDecodeBuffer(result.buffer)
-      const workbook = XLSX.read(content, { type: "string" })
-      data = pickBestSheet(XLSX, workbook).rows
-    } else {
-      // Excel: 自动挑选明细表（如快递账单「明细」优先于「汇总」）
-      const workbook = XLSX.read(result.buffer, { type: "array" })
-      data = pickBestSheet(XLSX, workbook).rows
-    }
+    return await parseTabularBuffer(filePath, result.buffer)
 
-    if (!data || data.length === 0) {
-      return null
-    }
-
-    const headers = (data[0] || []).map((h: any) => String(h || ""))
-
-    return {
-      name: getBaseName(filePath),
-      path: filePath,
-      headers,
-      data,
-    }
   } catch (error) {
     console.error("处理文件失败:", error)
     return null

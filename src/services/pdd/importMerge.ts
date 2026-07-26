@@ -3,22 +3,36 @@
  */
 import type { AdDay, PddBillLine } from "./types";
 import { normalizeShopName } from "./logistics";
+import { businessMonthOf } from "../businessPeriod";
 
 export function replaceImportedBillSource(
   existing: PddBillLine[],
   incoming: PddBillLine[],
   shopName: string,
   sourceName: string,
+  sourceFingerprint = "",
 ): PddBillLine[] {
   const shop = normalizeShopName(shopName);
   const source = String(sourceName || "").trim();
   const sourceKey = source.toLocaleLowerCase();
+  const fingerprint = String(sourceFingerprint || "").trim();
+  const incomingPeriods = new Set(
+    incoming.map((line) => businessMonthOf(line.time)).filter(Boolean),
+  );
   const kept = existing.filter((line) => {
-    if (!source) return true;
-    return !(
-      normalizeShopName(line.shopName) === shop &&
-      String(line.sourceName || "").trim().toLocaleLowerCase() === sourceKey
-    );
+    const existingFingerprint = String(line.sourceFingerprint || "").trim();
+    if (fingerprint && existingFingerprint === fingerprint) return false;
+    if (normalizeShopName(line.shopName) !== shop) return true;
+    if (
+      !source ||
+      String(line.sourceName || "").trim().toLocaleLowerCase() !== sourceKey
+    ) {
+      return true;
+    }
+    const existingPeriod = businessMonthOf(line.time);
+    return !!existingPeriod &&
+      incomingPeriods.size > 0 &&
+      !incomingPeriods.has(existingPeriod);
   });
   return [
     ...kept,
@@ -26,6 +40,7 @@ export function replaceImportedBillSource(
       ...line,
       shopName: shop,
       sourceName: source,
+      sourceFingerprint: fingerprint,
     })),
   ];
 }

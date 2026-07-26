@@ -1,3 +1,5 @@
+import { normalizeIdentifier } from "../../utils/identifier";
+
 /** 内部匹配键 */
 export function normMatchKey(s: string): string {
   return String(s ?? "")
@@ -40,28 +42,9 @@ export function cell(row: any[], idx: number): string {
   return String(row[idx] ?? "").trim();
 }
 
-export function cellId(row: any[], idx: number): string {
+export function cellId(row: any[], idx: number, label = "编号"): string {
   if (idx < 0) return "";
-  const v = row[idx];
-  if (v === null || v === undefined || v === "") return "";
-  if (typeof v === "number" && Number.isFinite(v)) {
-    // 12~16 位商品ID 用整数串，避免 4.77e+11
-    if (Math.abs(v) >= 1e11 && Math.abs(v) < 1e16 && Number.isInteger(v)) {
-      return String(Math.trunc(v));
-    }
-    if (Number.isInteger(v)) return String(Math.trunc(v));
-    // 非整数但接近整数（Excel 浮点）
-    const r = Math.round(v);
-    if (Math.abs(v - r) < 1e-6 && Math.abs(r) >= 1e10) return String(r);
-    return String(v);
-  }
-  let s = String(v).trim().replace(/,/g, "");
-  if (/e\+?\d+/i.test(s)) {
-    const n = Number(s);
-    if (Number.isFinite(n) && Math.abs(n) >= 1e10) return String(Math.round(n));
-  }
-  if (/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, "");
-  return s;
+  return normalizeIdentifier(row[idx], label);
 }
 
 export function findColExactThen(headers: string[], keywords: string[]): number {

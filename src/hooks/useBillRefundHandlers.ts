@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { FileData } from "../utils/excel";
 import { processFile, exportToExcel } from "../utils/excel";
+import { normalizeIdentifier } from "../utils/identifier";
 import { openDataFiles, saveDataFile } from "../utils/desktop";
 import type {
   BillRecord,
@@ -158,7 +159,8 @@ export function useBillRefundHandlers(deps: BillRefundHandlerDeps) {
                 platformCol >= 0
                   ? String(row[platformCol] || detectPlatform(fileData.name))
                   : detectPlatform(fileData.name),
-              orderId: idCol >= 0 ? String(row[idCol] || "") : "",
+              orderId:
+                idCol >= 0 ? normalizeIdentifier(row[idCol], "订单号") : "",
               refundAmount,
               refundDate: dateCol >= 0 ? String(row[dateCol] || "") : "",
               commissionLost: refundAmount * avgCommRate,

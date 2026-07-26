@@ -2,6 +2,7 @@
  * 文件识别与解析：订单/账务/商品资料；订单表与收款对账
  */
 import type { FileData } from "../../utils/excel";
+import { normalizeIdentifier } from "../../utils/identifier";
 import { BillRecord, findCol } from "../businessLogic";
 import type {
   SourceKind,
@@ -190,7 +191,7 @@ export function parsePddOrders(fileData: FileData): PddOrder[] {
   };
 
   return data.data.slice(1).map((row) => ({
-    orderId: cell(row, idx.orderId),
+    orderId: cellId(row, idx.orderId, "订单号"),
     productName: cell(row, idx.product),
     status: cell(row, idx.status),
     afterSale: cell(row, idx.afterSale),
@@ -225,7 +226,7 @@ export function parsePddBillLines(fileData: FileData): PddBillLine[] {
   const bizCol = findCol(h, ["业务描述", "描述"]);
 
   return data.data.slice(1).map((row) => ({
-    orderId: cell(row, orderCol),
+    orderId: cellId(row, orderCol, "订单号"),
     time: cellTime(row, timeCol),
     income: toNum(cell(row, incomeCol)),
     expense: Math.abs(toNum(cell(row, expenseCol))),
@@ -430,6 +431,7 @@ export function billRecordFromPdd(fileData: FileData, lines: PddBillLine[]): Bil
   return {
     fileName: fileData.name,
     sourceName: fileData.name,
+    sourceFingerprint: fileData.sourceFingerprint,
     shopName: shopNames.length === 1 ? shopNames[0] : "",
     platform: "拼多多",
     date: period,
@@ -670,7 +672,9 @@ export function reconcileOrderPayments(
 
   const payments: PayItem[] = paymentData.slice(1).map((row) => {
     const orderIdRaw =
-      payOrderIdx >= 0 ? String(row[payOrderIdx] ?? "").trim() : "";
+      payOrderIdx >= 0
+        ? normalizeIdentifier(row[payOrderIdx], "订单号")
+        : "";
     const remarkParts: string[] = [];
     if (payRemarkIdx >= 0) remarkParts.push(String(row[payRemarkIdx] ?? ""));
     // 也拼整行文本，便于从备注/对方信息抠单号
@@ -716,7 +720,10 @@ export function reconcileOrderPayments(
   };
 
   for (const order of orderTable.slice(1)) {
-    const oidRaw = orderIdIdx >= 0 ? String(order[orderIdIdx] ?? "").trim() : "";
+    const oidRaw =
+      orderIdIdx >= 0
+        ? normalizeIdentifier(order[orderIdIdx], "订单号")
+        : "";
     const oidNorm = normalizeOrderId(oidRaw);
     const name = nameIdx >= 0 ? String(order[nameIdx] ?? "") : "";
     const orderShop = orderShopIdx >= 0 ? normalizeShop(order[orderShopIdx]) : "";

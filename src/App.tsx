@@ -463,6 +463,7 @@ function App() {
               stamped,
               shop,
               fileData.name,
+              fileData.sourceFingerprint,
             );
             if (ingested.billRecords?.length) {
               const operatingBillRecords = ingested.billRecords.map((record) => ({

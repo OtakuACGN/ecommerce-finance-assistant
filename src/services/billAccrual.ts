@@ -3,6 +3,7 @@
  */
 import type { BillRecord, CommissionDetail, RefundOrder } from "./businessLogic";
 import { calculateRefundLossWithMatching } from "./businessLogic";
+import { businessMonthOf, isSameBusinessMonth } from "./businessPeriod";
 
 export function buildAccrualTable(billRecords: BillRecord[]): any[][] {
   const headers = [
@@ -29,12 +30,11 @@ export function buildAccrualTable(billRecords: BillRecord[]): any[][] {
       b.totalAmount > 0
         ? ((b.techFee / b.totalAmount) * 100).toFixed(2) + "%"
         : "0%";
-    const today = new Date();
-    const billDate = new Date(b.date);
-    const isCrossPeriod =
-      !isNaN(billDate.getTime()) &&
-      (billDate.getFullYear() !== today.getFullYear() ||
-        billDate.getMonth() !== today.getMonth());
+    const periodStatus = !businessMonthOf(b.date)
+      ? "⚠️账期未知"
+      : isSameBusinessMonth(b.date)
+        ? "当月"
+        : "⚠️跨期";
     return [
       b.platform,
       b.date,
@@ -48,7 +48,7 @@ export function buildAccrualTable(billRecords: BillRecord[]): any[][] {
       b.netAmount.toFixed(2),
       commRate,
       techRate,
-      isCrossPeriod ? "⚠️跨期" : "当月",
+      periodStatus,
     ];
   });
   const totalRow = [

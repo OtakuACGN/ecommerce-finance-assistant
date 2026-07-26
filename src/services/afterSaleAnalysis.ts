@@ -2,7 +2,9 @@
  * 售后分析：支持拼多多/ERP 售后导出；售后原因=大项，售后描述=小项（近似合并）
  */
 import type { FileData } from "../utils/excel";
+import { normalizeIdentifier } from "../utils/identifier";
 import type { PddOrder } from "./pddBusiness";
+import { businessDateText, businessMonthOf } from "./businessPeriod";
 import {
   clusterDescriptionsBatch,
   normalizeDescText,
@@ -155,8 +157,9 @@ export interface AfterSaleResult {
 }
 
 function norm(s: unknown): string { return String(s ?? "").trim(); }
-function normOrderId(raw: unknown): string { return norm(raw).replace(/\s+/g, ""); }
-function pad2(n: number): string { return String(n).padStart(2, "0"); }
+function normOrderId(raw: unknown): string {
+  return normalizeIdentifier(raw, "订单号", true);
+}
 function parseNum(raw: unknown): number {
   if (raw == null || raw === "") return 0;
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
@@ -166,21 +169,7 @@ function parseNum(raw: unknown): number {
 }
 function cell(row: any[], idx: number): string { if (idx < 0) return ""; return norm(row[idx]); }
 function dateText(raw: unknown): string {
-  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-    return `${raw.getFullYear()}-${pad2(raw.getMonth() + 1)}-${pad2(raw.getDate())}`;
-  }
-  const numeric =
-    typeof raw === "number"
-      ? raw
-      : /^\d{5}(?:\.\d+)?$/.test(norm(raw))
-        ? Number(raw)
-        : NaN;
-  if (Number.isFinite(numeric) && numeric >= 20000 && numeric < 80000) {
-    const utc = Date.UTC(1899, 11, 30) + Math.floor(numeric) * 86400000;
-    const date = new Date(utc);
-    return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
-  }
-  return norm(raw);
+  return businessDateText(raw);
 }
 function dateCell(row: any[], idx: number): string {
   if (idx < 0) return "";
@@ -193,14 +182,7 @@ function findCol(headers: string[], names: string[]): number {
   return -1;
 }
 function monthOf(dt: unknown): string {
-  const text = dateText(dt);
-  const m = text.match(/(?:^|\D)(\d{4})[-/年.](\d{1,2})(?:\D|$)/);
-  if (!m) {
-    const compact = text.match(/^(\d{4})(\d{2})(?:\d{2})?$/);
-    if (!compact) return "";
-    return `${compact[1]}-${compact[2]}`;
-  }
-  return `${m[1]}-${m[2].padStart(2, "0")}`;
+  return businessMonthOf(dt);
 }
 
 export function findAfterSaleHeaderRow(data: any[][]): number {
@@ -357,7 +339,7 @@ export function parseAfterSaleFile(data: any[][]): AfterSaleRow[] {
   for (let r = headerIdx + 1; r < data.length; r++) {
     const row = data[r] || [];
     const afterSaleId = cell(row, iId);
-    const orderId = normOrderId(cell(row, iOrder));
+    const orderId = normOrderId(row[iOrder]);
     if (!afterSaleId && !orderId) continue;
     if (afterSaleId.includes("3个月前") || orderId.includes("3个月前")) continue;
     const status = cell(row, iStatus);
@@ -466,7 +448,7 @@ export function parseOrderBaseFile(data: any[][]): OrderBaseRow[] {
   const out: OrderBaseRow[] = [];
   for (let r = headerIdx + 1; r < data.length; r++) {
     const row = data[r] || [];
-    const orderId = normOrderId(cell(row, iOrder));
+    const orderId = normOrderId(row[iOrder]);
     if (!orderId) continue;
     const piece: OrderBaseRow = {
       orderId, productId: cell(row, iPid), productName: cell(row, iName),

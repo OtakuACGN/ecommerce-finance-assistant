@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { exportToExcel } from "../utils/excel";
 import { saveDataFile } from "../utils/desktop";
 import type { BillRecord } from "../services/businessLogic";
+import { businessMonthOf } from "../services/businessPeriod";
 
 interface PlatformSummary {
   platform: string;
@@ -50,18 +51,7 @@ export default function MonthlySummary({
   const currentMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`;
 
   const getMonthKey = useCallback((dateText: string) => {
-    if (!dateText) return "";
-    const normalized = dateText
-      .replace(/[年/.]/g, "-")
-      .replace(/[月]/g, "-")
-      .replace(/[日]/g, "")
-      .trim();
-    const directMatch = normalized.match(/^(\d{4})-(\d{1,2})/);
-    if (directMatch)
-      return `${directMatch[1]}-${directMatch[2].padStart(2, "0")}`;
-    const parsed = new Date(dateText);
-    if (isNaN(parsed.getTime())) return "";
-    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
+    return businessMonthOf(dateText);
   }, []);
   const years = useMemo(() => {
     const importedYears = billRecords
